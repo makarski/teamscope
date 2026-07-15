@@ -1,0 +1,59 @@
+# teamscope configuration template.
+# Copy to teamscope-config.toml and fill in credentials.
+
+[jira]
+user = "you@example.com"
+base_url = "https://your-domain.atlassian.net"
+token = "<jira-api-token>"
+# Custom field id holding an epic's start date (optional).
+start_date_field = "customfield_10015"
+
+  # Map raw Jira statuses onto delivery buckets.
+  [jira.status_names]
+  done = ["Done", "Closed", "Resolved"]
+  progress = ["In Progress", "In Review"]
+  todo = ["To Do", "Backlog", "Open"]
+
+# GitHub is a secondary contribution signal (optional; not yet wired to fetch).
+[github]
+token = "<github-token>"
+
+# Anthropic powers the classification fallback and alignment scoring.
+# Omit this section (or leave token empty) to run rules-only with no AI.
+[anthropic]
+base_url = "https://api.anthropic.com"
+token = "<anthropic-api-key>"
+model = "claude-3-5-haiku-latest"
+
+# Slack is optional; snapshot posts a summary per team when configured.
+[slack]
+token = "<slack-bot-token>"
+channel = "#team-progress"
+
+# The goals prompt is the human-provided definition of "aligned".
+# Leave empty to disable alignment scoring.
+[goals]
+prompt = """
+This quarter we focus on shipping billing v2, reducing onboarding friction,
+and improving reliability. We are not starting new platforms.
+"""
+
+# Keyword hints for the rule engine (labels/components take priority).
+[classify]
+business = ["billing", "revenue", "customer", "onboarding", "checkout"]
+chore = ["refactor", "upgrade", "tech debt", "flaky", "migration", "cleanup"]
+rnd = ["spike", "poc", "prototype", "experiment", "research"]
+
+# Where snapshots are persisted.
+[store]
+path = "teamscope.db"
+
+[[teams]]
+name = "Payments"
+jira_projects = ["PT"]
+github_repos = ["your-org/payments"]
+
+[[teams]]
+name = "Platform"
+jira_projects = ["PLAT"]
+github_repos = ["your-org/platform"]

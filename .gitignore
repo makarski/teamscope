@@ -1,0 +1,10 @@
+# Build output
+/teamscope
+
+# Local config with secrets
+/teamscope-config.toml
+
+# SQLite state
+*.db
+*.db-shm
+*.db-wal
