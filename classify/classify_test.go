@@ -17,14 +17,13 @@ func epic(summary, desc string, labels, components []string) *ingest.RawEpic {
 	for _, c := range components {
 		comps = append(comps, &jira.Component{Name: c})
 	}
-	return &ingest.RawEpic{
-		Epic: jira.Issue{Fields: &jira.IssueFields{
-			Summary:     summary,
-			Description: desc,
-			Labels:      labels,
-			Components:  comps,
-		}},
-	}
+	issue := jira.Issue{Fields: &jira.IssueFields{
+		Summary:    summary,
+		Labels:     labels,
+		Components: comps,
+	}}
+	re := ingest.NewRawEpic(issue, nil, desc)
+	return &re
 }
 
 var sampleClassify = &config.Classify{
