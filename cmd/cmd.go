@@ -48,7 +48,7 @@ func (d *deps) buildRunner() (*pipeline.Runner, error) {
 	return pipeline.NewRunner(
 		fetcher,
 		d.buildClassifier(),
-		alignerOrNil(align.NewScorer(d.cfg.Anthropic, d.cfg.Goals)),
+		alignerOrNil(align.NewScorer(d.cfg.Anthropic, d.cfg.Bedrock, d.cfg.Goals)),
 		d.store,
 		d.cfg.Jira.StatusNames,
 		d.cfg.GoalsHash(),
@@ -60,7 +60,7 @@ func (d *deps) buildRunner() (*pipeline.Runner, error) {
 // skips AI cleanly.
 func (d *deps) buildClassifier() *classify.Classifier {
 	rules := classify.NewRuleEngine(d.cfg.Classify)
-	if ai := classify.NewAnthropicClassifier(d.cfg.Anthropic); ai != nil {
+	if ai := classify.NewAnthropicClassifier(d.cfg.Anthropic, d.cfg.Bedrock); ai != nil {
 		return classify.NewClassifier(rules, ai)
 	}
 	return classify.NewClassifier(rules, nil)

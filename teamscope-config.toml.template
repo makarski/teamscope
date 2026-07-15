@@ -18,12 +18,22 @@ start_date_field = "customfield_10015"
 [github]
 token = "<github-token>"
 
-# Anthropic powers the classification fallback and alignment scoring.
-# Omit this section (or leave token empty) to run rules-only with no AI.
+# Anthropic (or Bedrock, below) powers the classification fallback and
+# alignment scoring. Omit both sections (or leave token/model empty) to run
+# rules-only with no AI.
 [anthropic]
 base_url = "https://api.anthropic.com"
 token = "<anthropic-api-key>"
 model = "claude-3-5-haiku-latest"
+
+# Bedrock is an alternative to [anthropic] for accounts that only have AWS
+# access. When [bedrock] model is set, it takes priority over [anthropic].
+# Auth uses the standard AWS credential chain (env vars, shared config
+# profile, or an IAM role) -- no token goes here.
+# [bedrock]
+# region = "us-east-1"
+# model = "anthropic.claude-3-5-haiku-20241022-v1:0"
+# profile = "my-aws-profile"  # optional; defaults to the standard AWS chain
 
 # Slack is optional; snapshot posts a summary per team when configured.
 [slack]

@@ -23,8 +23,8 @@ type Scorer struct {
 
 // NewScorer builds a goals scorer. Returns nil when either the AI client or
 // the goals prompt is absent, so callers can skip alignment scoring.
-func NewScorer(cfg *config.Anthropic, goals *config.Goals) *Scorer {
-	client := anthropic.New(cfg)
+func NewScorer(cfg *config.Anthropic, bedrockCfg *config.Bedrock, goals *config.Goals) *Scorer {
+	client := anthropic.New(cfg, bedrockCfg)
 	if client == nil || !hasGoals(goals) {
 		return nil
 	}

@@ -25,6 +25,7 @@ func TestClearPlaceholders(t *testing.T) {
 	cfg := Config{
 		Slack:     &Slack{Token: "<slack-bot-token>", Channel: "#real-channel"},
 		Anthropic: &Anthropic{Token: "<anthropic-api-key>"},
+		Bedrock:   &Bedrock{Model: "<bedrock-model-id>", Region: "us-east-1"},
 		GitHub:    &GitHub{Token: "ghp_real"},
 	}
 	cfg.clearPlaceholders()
@@ -37,6 +38,12 @@ func TestClearPlaceholders(t *testing.T) {
 	}
 	if cfg.Anthropic.Token != "" {
 		t.Errorf("anthropic token = %q, want empty", cfg.Anthropic.Token)
+	}
+	if cfg.Bedrock.Model != "" {
+		t.Errorf("bedrock model = %q, want empty", cfg.Bedrock.Model)
+	}
+	if cfg.Bedrock.Region != "us-east-1" {
+		t.Errorf("bedrock region wrongly cleared: %q", cfg.Bedrock.Region)
 	}
 	if cfg.GitHub.Token != "ghp_real" {
 		t.Errorf("github real token wrongly cleared: %q", cfg.GitHub.Token)
