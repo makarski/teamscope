@@ -19,9 +19,10 @@ type AnthropicClassifier struct {
 }
 
 // NewAnthropicClassifier builds an AI classifier from config. Returns nil if
-// no Anthropic config/token is present, letting the caller skip AI fallback.
-func NewAnthropicClassifier(cfg *config.Anthropic) *AnthropicClassifier {
-	client := anthropic.New(cfg)
+// neither Anthropic nor Bedrock is configured, letting the caller skip AI
+// fallback.
+func NewAnthropicClassifier(cfg *config.Anthropic, bedrockCfg *config.Bedrock) *AnthropicClassifier {
+	client := anthropic.New(cfg, bedrockCfg)
 	if client == nil {
 		return nil
 	}

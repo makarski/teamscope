@@ -64,6 +64,11 @@ See `teamscope-config.toml.template` for the full annotated reference. Minimum
 required: `[jira] base_url`, one `[[teams]]` entry with `jira_projects`, and
 `[store] path`. Anthropic, Slack, GitHub, and goals are optional.
 
+The AI stage can run through the Anthropic API (`[anthropic]`, needs an API
+token) or through Amazon Bedrock (`[bedrock]`, needs only AWS credentials via
+the standard credential chain — env vars, shared config profile, or an IAM
+role). If both are configured, Bedrock takes priority.
+
 ## State
 
 Snapshots are stored in a single SQLite file (`[store] path`). Each snapshot

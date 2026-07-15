@@ -17,6 +17,7 @@ type (
 		Jira      *Jira      `toml:"jira"`
 		GitHub    *GitHub    `toml:"github"`
 		Anthropic *Anthropic `toml:"anthropic"`
+		Bedrock   *Bedrock   `toml:"bedrock"`
 		Slack     *Slack     `toml:"slack"`
 		Goals     *Goals     `toml:"goals"`
 		Classify  *Classify  `toml:"classify"`
@@ -48,6 +49,16 @@ type (
 		BaseURL string `toml:"base_url"`
 		Token   string `toml:"token"`
 		Model   string `toml:"model"`
+	}
+
+	// Bedrock runs the AI stage through Amazon Bedrock instead of the
+	// Anthropic API directly. Auth uses the standard AWS credential chain
+	// (env vars, shared config/profile, or an IAM role) — no token here.
+	// When both [anthropic] and [bedrock] are configured, Bedrock wins.
+	Bedrock struct {
+		Region  string `toml:"region"`
+		Model   string `toml:"model"`
+		Profile string `toml:"profile"`
 	}
 
 	Slack struct {
@@ -121,6 +132,9 @@ func (c *Config) clearPlaceholders() {
 	}
 	if c.Anthropic != nil {
 		c.Anthropic.Token = blankIfPlaceholder(c.Anthropic.Token)
+	}
+	if c.Bedrock != nil {
+		c.Bedrock.Model = blankIfPlaceholder(c.Bedrock.Model)
 	}
 	if c.GitHub != nil {
 		c.GitHub.Token = blankIfPlaceholder(c.GitHub.Token)
