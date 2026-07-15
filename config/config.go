@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/pelletier/go-toml"
 )
@@ -88,11 +89,42 @@ func LoadConfig(filepath string) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %s", err)
 	}
 
+	cfg.clearPlaceholders()
+
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 
 	return &cfg, nil
+}
+
+// isPlaceholder reports whether a value is an unedited template placeholder,
+// i.e. wrapped in angle brackets like "<jira-api-token>".
+func isPlaceholder(v string) bool {
+	v = strings.TrimSpace(v)
+	return strings.HasPrefix(v, "<") && strings.HasSuffix(v, ">")
+}
+
+func blankIfPlaceholder(v string) string {
+	if isPlaceholder(v) {
+		return ""
+	}
+	return v
+}
+
+// clearPlaceholders blanks out unedited template placeholders in optional
+// sections so a half-filled template never triggers a real API call.
+func (c *Config) clearPlaceholders() {
+	if c.Slack != nil {
+		c.Slack.Token = blankIfPlaceholder(c.Slack.Token)
+		c.Slack.Channel = blankIfPlaceholder(c.Slack.Channel)
+	}
+	if c.Anthropic != nil {
+		c.Anthropic.Token = blankIfPlaceholder(c.Anthropic.Token)
+	}
+	if c.GitHub != nil {
+		c.GitHub.Token = blankIfPlaceholder(c.GitHub.Token)
+	}
 }
 
 func (c *Config) validate() error {
