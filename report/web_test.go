@@ -24,7 +24,7 @@ func snapshot() domain.Snapshot {
 			// unmapped chore
 			{Key: "PT-2", Summary: "Upgrade", Criterion: domain.CriterionRef{Key: ""}, Status: domain.StatusOngoing, Progress: 0.2},
 			// advances billing, but overdue
-			{Key: "PT-1", Summary: "Billing", Criterion: domain.CriterionRef{Key: "billing", Advances: true}, Lens: domain.LensBusiness, Status: domain.StatusOverdue, Progress: 0.5},
+			{Key: "PT-1", Summary: "Billing", Criterion: domain.CriterionRef{Key: "billing", Advances: domain.AdvAdvances}, Lens: domain.LensBusiness, Status: domain.StatusOverdue, Progress: 0.5},
 		},
 	}
 }

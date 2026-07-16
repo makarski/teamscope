@@ -92,6 +92,7 @@ const dashboardTemplate = `<!DOCTYPE html>
   .cov .track { display: inline-block; width: 90px; height: 8px; border-radius: 4px; background: #262b38; vertical-align: middle; margin-right: .5rem; }
   .st-done { color: #7ee787; }
   .st-open { color: #ffcf7a; }
+  .st-blocked { color: #ff7b72; }
   table { width: 100%; border-collapse: collapse; font-size: .85rem; }
   th, td { text-align: left; padding: .45rem .5rem; border-bottom: 1px solid #262b38; }
   th { color: #8a90a2; font-weight: 600; }
@@ -161,7 +162,7 @@ const dashboardTemplate = `<!DOCTYPE html>
       <tr>
         <td><strong>{{.Key}}</strong> {{.Summary}}</td>
         <td>{{if .Criterion}}<span class="tag">{{.Criterion}}</span>{{else}}&mdash;{{end}}</td>
-        <td>{{if .Advances}}<span class="st-done">yes</span>{{else}}&mdash;{{end}}</td>
+        <td>{{if eq .Advances "advances"}}<span class="st-done">yes</span>{{else if eq .Advances "stalled"}}<span class="st-blocked">no</span>{{else}}&mdash;{{end}}</td>
         <td class="status-{{.Status}}">{{.Status}}</td>
         <td>{{.Progress}}%</td>
       </tr>

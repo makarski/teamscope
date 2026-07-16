@@ -46,7 +46,7 @@ type EpicView struct {
 	Key       string
 	Summary   string
 	Criterion string
-	Advances  bool
+	Advances  domain.Advancement
 	AlignNote string
 	Lens      domain.Lens
 	Status    domain.ProgressStatus
@@ -93,7 +93,7 @@ func criterionCoverage(snap domain.Snapshot) []CriterionCoverage {
 			continue // unmapped or stale key; surfaced separately
 		}
 		cov.Total++
-		if e.Criterion.Advances {
+		if e.Criterion.Advances == domain.AdvAdvances {
 			cov.Advancing++
 		}
 	}

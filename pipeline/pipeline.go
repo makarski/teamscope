@@ -35,7 +35,7 @@ type Classifier interface {
 // Aligner scores whether an epic advances a criterion. A nil Aligner disables
 // advancement scoring.
 type Aligner interface {
-	Score(ctx context.Context, epic *ingest.RawEpic, criterion domain.Criterion) (bool, string, error)
+	Score(ctx context.Context, epic *ingest.RawEpic, criterion domain.Criterion) (domain.Advancement, string, error)
 }
 
 // Store persists snapshots.
@@ -148,14 +148,14 @@ func (r *Runner) enrich(ctx context.Context, epic *ingest.RawEpic, rc runContext
 }
 
 // scoreAdvancement returns whether the epic advances its criterion, defaulting
-// to false when no aligner is configured or the AI call fails (best-effort).
-func (r *Runner) scoreAdvancement(ctx context.Context, epic *ingest.RawEpic, criterion domain.Criterion) (bool, string) {
+// to unscored when no aligner is configured or the AI call fails (best-effort).
+func (r *Runner) scoreAdvancement(ctx context.Context, epic *ingest.RawEpic, criterion domain.Criterion) (domain.Advancement, string) {
 	if r.deps.Aligner == nil {
-		return false, ""
+		return domain.AdvUnscored, ""
 	}
 	advances, note, err := r.deps.Aligner.Score(ctx, epic, criterion)
 	if err != nil {
-		return false, ""
+		return domain.AdvUnscored, ""
 	}
 	return advances, note
 }

@@ -56,11 +56,11 @@ type stubAligner struct {
 	err error
 }
 
-func (s stubAligner) Score(context.Context, *ingest.RawEpic, domain.Criterion) (bool, string, error) {
+func (s stubAligner) Score(context.Context, *ingest.RawEpic, domain.Criterion) (domain.Advancement, string, error) {
 	if s.err != nil {
-		return false, "", s.err
+		return domain.AdvUnscored, "", s.err
 	}
-	return true, "on target", nil
+	return domain.AdvAdvances, "on target", nil
 }
 
 type stubStore struct {
@@ -128,7 +128,7 @@ func assertEpicEnrichment(t *testing.T, snap domain.Snapshot) {
 	if e.Key != "PT-1" {
 		t.Errorf("key = %q, want PT-1", e.Key)
 	}
-	if e.Criterion.Key != "business" || !e.Criterion.Advances {
+	if e.Criterion.Key != "business" || e.Criterion.Advances != domain.AdvAdvances {
 		t.Errorf("criterion wrong: %+v", e.Criterion)
 	}
 	if e.Lens != domain.LensBusiness {
@@ -139,7 +139,7 @@ func assertEpicEnrichment(t *testing.T, snap domain.Snapshot) {
 	}
 }
 
-func TestRunNilAlignerLeavesAdvancesFalse(t *testing.T) {
+func TestRunNilAlignerLeavesAdvancesUnscored(t *testing.T) {
 	fetcher := stubFetcher{epics: []ingest.RawEpic{rawEpic("PT-1", "Billing", "Done")}}
 	store := &stubStore{}
 	runner := newRunner(fetcher, stubSource{}, nil, store)
@@ -147,8 +147,8 @@ func TestRunNilAlignerLeavesAdvancesFalse(t *testing.T) {
 	if _, err := runner.Run(context.Background(), config.Team{Name: "P", JiraProjects: []string{"PT"}}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if store.saved.Epics[0].Criterion.Advances {
-		t.Error("advances should be false with no aligner")
+	if store.saved.Epics[0].Criterion.Advances != domain.AdvUnscored {
+		t.Error("advances should be unscored with no aligner")
 	}
 }
 
@@ -160,8 +160,8 @@ func TestRunAlignerErrorIsBestEffort(t *testing.T) {
 	if _, err := runner.Run(context.Background(), config.Team{Name: "P", JiraProjects: []string{"PT"}}); err != nil {
 		t.Fatalf("run should not fail on aligner error: %v", err)
 	}
-	if store.saved.Epics[0].Criterion.Advances {
-		t.Error("advances should be false on aligner error")
+	if store.saved.Epics[0].Criterion.Advances != domain.AdvUnscored {
+		t.Error("advances should be unscored on aligner error")
 	}
 }
 

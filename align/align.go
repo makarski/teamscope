@@ -31,22 +31,29 @@ func NewScorer(cfg *config.Anthropic, bedrockCfg *config.Bedrock) *Scorer {
 }
 
 type scoreReply struct {
-	Advances bool   `json:"advances"`
+	Advances *bool  `json:"advances"`
 	Note     string `json:"note"`
 }
 
 // Score returns whether the epic advances the criterion, plus a short note.
-func (s *Scorer) Score(ctx context.Context, epic *ingest.RawEpic, criterion domain.Criterion) (bool, string, error) {
+func (s *Scorer) Score(ctx context.Context, epic *ingest.RawEpic, criterion domain.Criterion) (domain.Advancement, string, error) {
 	raw, err := s.client.Complete(ctx, s.buildPrompt(epic, criterion), alignMaxTokens)
 	if err != nil {
-		return false, "", err
+		return domain.AdvUnscored, "", err
 	}
 
 	reply, err := parseReply(raw)
 	if err != nil {
-		return false, "", err
+		return domain.AdvUnscored, "", err
 	}
-	return reply.Advances, strings.TrimSpace(reply.Note), nil
+	return advancementOf(*reply.Advances), strings.TrimSpace(reply.Note), nil
+}
+
+func advancementOf(advances bool) domain.Advancement {
+	if advances {
+		return domain.AdvAdvances
+	}
+	return domain.AdvStalled
 }
 
 func (s *Scorer) buildPrompt(epic *ingest.RawEpic, criterion domain.Criterion) string {
@@ -64,6 +71,9 @@ func parseReply(raw string) (scoreReply, error) {
 	var reply scoreReply
 	if err := json.Unmarshal([]byte(jsonPart), &reply); err != nil {
 		return scoreReply{}, fmt.Errorf("align: decode reply %q: %w", raw, err)
+	}
+	if reply.Advances == nil {
+		return scoreReply{}, fmt.Errorf("align: reply %q missing \"advances\" field", raw)
 	}
 	return reply, nil
 }

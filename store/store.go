@@ -42,7 +42,8 @@ CREATE TABLE IF NOT EXISTS criteria (
 	title         TEXT    NOT NULL,
 	status        TEXT    NOT NULL,
 	weight        REAL    NOT NULL,
-	lens          TEXT    NOT NULL
+	lens          TEXT    NOT NULL,
+	UNIQUE(snapshot_id, key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_criteria_snapshot
@@ -55,7 +56,7 @@ CREATE TABLE IF NOT EXISTS epics (
 	summary       TEXT    NOT NULL,
 	criterion_key TEXT    NOT NULL,
 	class_source  TEXT    NOT NULL,
-	advances      INTEGER NOT NULL,
+	advances      TEXT    NOT NULL,
 	align_note    TEXT    NOT NULL,
 	lens          TEXT    NOT NULL,
 	progress      REAL    NOT NULL,
@@ -185,20 +186,13 @@ func insertEpics(ctx context.Context, tx *sql.Tx, snapID int64, epics []domain.C
 	for _, e := range epics {
 		if _, err := stmt.ExecContext(ctx,
 			snapID, e.Key, e.Summary, e.Criterion.Key, string(e.Criterion.Source),
-			boolToInt(e.Criterion.Advances), e.Criterion.Note, string(e.Lens),
+			string(e.Criterion.Advances), e.Criterion.Note, string(e.Lens),
 			e.Progress, string(e.Status), e.Activity.PullRequests, e.Activity.Commits,
 		); err != nil {
 			return fmt.Errorf("store: insert epic %s: %w", e.Key, err)
 		}
 	}
 	return nil
-}
-
-func boolToInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
 }
 
 // Latest returns the most recent snapshot for a team, or sql.ErrNoRows if none exist.
@@ -337,9 +331,8 @@ func (s *Store) loadEpics(ctx context.Context, snapID int64) ([]domain.Classifie
 
 func scanEpic(rows *sql.Rows) (domain.ClassifiedEpic, error) {
 	var (
-		e                      domain.ClassifiedEpic
-		critKey, src, lens, st string
-		advances               int
+		e                                domain.ClassifiedEpic
+		critKey, src, lens, st, advances string
 	)
 	if err := rows.Scan(
 		&e.Key, &e.Summary, &critKey, &src, &advances, &e.Criterion.Note,
@@ -349,7 +342,7 @@ func scanEpic(rows *sql.Rows) (domain.ClassifiedEpic, error) {
 	}
 	e.Criterion.Key = critKey
 	e.Criterion.Source = domain.ClassSource(src)
-	e.Criterion.Advances = advances != 0
+	e.Criterion.Advances = domain.Advancement(advances)
 	e.Lens = domain.Lens(lens)
 	e.Status = domain.ProgressStatus(st)
 	return e, nil

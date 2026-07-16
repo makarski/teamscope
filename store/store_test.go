@@ -34,7 +34,7 @@ func sampleSnapshot() domain.Snapshot {
 				Key: "PT-1", Summary: "Billing v2",
 				Criterion: domain.CriterionRef{
 					Key: "business", Source: domain.SourceLabel,
-					Advances: true, Note: "matches Q3 billing goal",
+					Advances: domain.AdvAdvances, Note: "matches Q3 billing goal",
 				},
 				Lens: domain.LensBusiness, Progress: 0.5, Status: domain.StatusOngoing,
 				Activity: domain.Activity{PullRequests: 3, Commits: 12},
@@ -91,7 +91,7 @@ func assertFirstEpic(t *testing.T, got domain.Snapshot) {
 	if e.Criterion.Key != "business" {
 		t.Errorf("criterion key = %q, want business", e.Criterion.Key)
 	}
-	if !e.Criterion.Advances {
+	if e.Criterion.Advances != domain.AdvAdvances {
 		t.Error("criterion should advance")
 	}
 	if e.Lens != domain.LensBusiness {

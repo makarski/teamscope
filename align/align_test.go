@@ -26,8 +26,17 @@ func TestParseReply(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseReply: %v", err)
 	}
-	if !reply.Advances || reply.Note != "delivers the pillar" {
+	if reply.Advances == nil {
+		t.Fatal("advances should be present")
+	}
+	if !*reply.Advances || reply.Note != "delivers the pillar" {
 		t.Errorf("unexpected reply: %+v", reply)
+	}
+}
+
+func TestParseReplyMissingAdvances(t *testing.T) {
+	if _, err := parseReply(`{"note":"no verdict"}`); err == nil {
+		t.Error("expected error when advances field is absent")
 	}
 }
 

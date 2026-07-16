@@ -70,11 +70,23 @@ const (
 	SourceUnknown   ClassSource = "unknown"
 )
 
+// Advancement is a tri-state verdict on whether an epic moves its criterion
+// forward. It distinguishes "not scored" (no aligner, or the AI call failed)
+// from an explicit negative, so reports never read absence of scoring as a
+// negative verdict.
+type Advancement string
+
+const (
+	AdvUnscored Advancement = ""         // no verdict was produced
+	AdvAdvances Advancement = "advances" // the epic moves the criterion forward
+	AdvStalled  Advancement = "stalled"  // the epic does not advance the criterion
+)
+
 // CriterionRef is the outcome of mapping one epic onto a rubric: which
 // criterion it serves, whether it advances that criterion, and how we decided.
 type CriterionRef struct {
 	Key      string      `json:"key"` // "" when the epic maps to no criterion
-	Advances bool        `json:"advances"`
+	Advances Advancement `json:"advances"`
 	Source   ClassSource `json:"source"`
 	Note     string      `json:"note"`
 }
