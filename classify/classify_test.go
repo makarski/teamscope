@@ -41,6 +41,30 @@ var workHints = []KeywordHint{
 	{Keyword: "experiment", CriterionKey: "rnd"},
 }
 
+func TestRuleEngineCanonicalizesCasing(t *testing.T) {
+	re := NewRuleEngine(workRubric, workHints)
+
+	// Label "Business" (capitalized) must resolve to the declared key "business".
+	key, src := re.Map(epic("work", "", []string{"Business"}, nil))
+	if key != "business" || src != domain.SourceLabel {
+		t.Errorf("got %q/%q, want business/label", key, src)
+	}
+
+	// Rubric.Find (case-sensitive) must accept the returned key.
+	if _, ok := workRubric.Find(key); !ok {
+		t.Errorf("returned key %q not found in rubric", key)
+	}
+}
+
+func TestRuleEngineDropsUnknownKeywordHint(t *testing.T) {
+	re := NewRuleEngine(workRubric, []KeywordHint{
+		{Keyword: "foo", CriterionKey: "nonexistent"},
+	})
+	if key, src := re.Map(epic("foo bar", "", nil, nil)); src != domain.SourceUnknown {
+		t.Errorf("hint to unknown criterion should be dropped, got %q/%q", key, src)
+	}
+}
+
 func TestRuleEnginePriority(t *testing.T) {
 	re := NewRuleEngine(workRubric, workHints)
 

@@ -19,7 +19,7 @@ type TeamView struct {
 	Lenses       []LensShare
 	Drift        []CriterionCoverage // criteria with no active epic advancing them
 	Unmapped     []EpicView          // epics that mapped to no criterion
-	OffTrack     []EpicView          // overdue or non-advancing active epics
+	OffTrack     []EpicView          // overdue epics needing attention
 	Epics        []EpicView
 	BlockerFocus int // % of active epics working an open criterion
 }
