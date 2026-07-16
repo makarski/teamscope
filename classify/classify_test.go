@@ -7,7 +7,6 @@ import (
 
 	"github.com/andygrunwald/go-jira"
 
-	"github.com/makarski/teamscope/config"
 	"github.com/makarski/teamscope/domain"
 	"github.com/makarski/teamscope/ingest"
 )
@@ -26,43 +25,53 @@ func epic(summary, desc string, labels, components []string) *ingest.RawEpic {
 	return &re
 }
 
-var sampleClassify = &config.Classify{
-	Business: []string{"billing", "revenue"},
-	Chore:    []string{"refactor", "tech debt"},
-	RnD:      []string{"spike", "experiment"},
+// workRubric is the business/chore/rnd taxonomy expressed as a static rubric.
+var workRubric = domain.Rubric{Name: "work", Criteria: []domain.Criterion{
+	{Key: "business", Title: "Customer/revenue value"},
+	{Key: "chore", Title: "Maintenance and tech debt"},
+	{Key: "rnd", Title: "Research and experiments"},
+}}
+
+var workHints = []KeywordHint{
+	{Keyword: "billing", CriterionKey: "business"},
+	{Keyword: "revenue", CriterionKey: "business"},
+	{Keyword: "refactor", CriterionKey: "chore"},
+	{Keyword: "tech debt", CriterionKey: "chore"},
+	{Keyword: "spike", CriterionKey: "rnd"},
+	{Keyword: "experiment", CriterionKey: "rnd"},
 }
 
 func TestRuleEnginePriority(t *testing.T) {
-	re := NewRuleEngine(sampleClassify)
+	re := NewRuleEngine(workRubric, workHints)
 
 	tests := []struct {
 		name       string
 		epic       *ingest.RawEpic
-		wantType   domain.WorkType
+		wantKey    string
 		wantSource domain.ClassSource
 	}{
 		{
 			name:       "label wins over keyword",
 			epic:       epic("refactor the billing engine", "", []string{"business"}, nil),
-			wantType:   domain.WorkBusiness,
+			wantKey:    "business",
 			wantSource: domain.SourceLabel,
 		},
 		{
 			name:       "component when no label",
 			epic:       epic("some work", "", nil, []string{"rnd"}),
-			wantType:   domain.WorkRnD,
+			wantKey:    "rnd",
 			wantSource: domain.SourceComponent,
 		},
 		{
 			name:       "keyword when no label or component",
 			epic:       epic("spike on new queue", "", nil, nil),
-			wantType:   domain.WorkRnD,
+			wantKey:    "rnd",
 			wantSource: domain.SourceKeyword,
 		},
 		{
 			name:       "keyword in description",
 			epic:       epic("misc", "we must refactor this", nil, nil),
-			wantType:   domain.WorkChore,
+			wantKey:    "chore",
 			wantSource: domain.SourceKeyword,
 		},
 		{
@@ -74,35 +83,39 @@ func TestRuleEnginePriority(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotType, gotSource := re.Classify(tt.epic)
+			gotKey, gotSource := re.Map(tt.epic)
 			if gotSource != tt.wantSource {
 				t.Errorf("source = %q, want %q", gotSource, tt.wantSource)
 			}
-			if tt.wantSource != domain.SourceUnknown && gotType != tt.wantType {
-				t.Errorf("type = %q, want %q", gotType, tt.wantType)
+			if tt.wantSource != domain.SourceUnknown && gotKey != tt.wantKey {
+				t.Errorf("key = %q, want %q", gotKey, tt.wantKey)
 			}
 		})
 	}
 }
 
 type stubAI struct {
-	result domain.WorkType
+	result string
 	err    error
 	called bool
 }
 
-func (s *stubAI) Classify(context.Context, *ingest.RawEpic) (domain.WorkType, error) {
+func (s *stubAI) Map(context.Context, *ingest.RawEpic, domain.Rubric) (string, error) {
 	s.called = true
 	return s.result, s.err
 }
 
-func TestClassifierRulesShortCircuitAI(t *testing.T) {
-	ai := &stubAI{result: domain.WorkRnD}
-	c := NewClassifier(NewRuleEngine(sampleClassify), ai)
+func classifierFor(ai AIMapper) *Classifier {
+	return NewFactory(ai, workHints).For(workRubric)
+}
 
-	wt, src := c.Classify(context.Background(), epic("billing work", "", nil, nil))
-	if wt != domain.WorkBusiness || src != domain.SourceKeyword {
-		t.Errorf("got %q/%q, want business/keyword", wt, src)
+func TestClassifierRulesShortCircuitAI(t *testing.T) {
+	ai := &stubAI{result: "rnd"}
+	c := classifierFor(ai)
+
+	ref := c.Classify(context.Background(), epic("billing work", "", nil, nil))
+	if ref.Key != "business" || ref.Source != domain.SourceKeyword {
+		t.Errorf("got %q/%q, want business/keyword", ref.Key, ref.Source)
 	}
 	if ai.called {
 		t.Error("AI should not be called when a rule matches")
@@ -110,33 +123,33 @@ func TestClassifierRulesShortCircuitAI(t *testing.T) {
 }
 
 func TestClassifierAIFallback(t *testing.T) {
-	ai := &stubAI{result: domain.WorkRnD}
-	c := NewClassifier(NewRuleEngine(sampleClassify), ai)
+	ai := &stubAI{result: "rnd"}
+	c := classifierFor(ai)
 
-	wt, src := c.Classify(context.Background(), epic("do the thing", "nothing", nil, nil))
-	if wt != domain.WorkRnD || src != domain.SourceAI {
-		t.Errorf("got %q/%q, want rnd/ai", wt, src)
+	ref := c.Classify(context.Background(), epic("do the thing", "nothing", nil, nil))
+	if ref.Key != "rnd" || ref.Source != domain.SourceAI {
+		t.Errorf("got %q/%q, want rnd/ai", ref.Key, ref.Source)
 	}
 	if !ai.called {
 		t.Error("AI should be called when no rule matches")
 	}
 }
 
-func TestClassifierAIErrorDefaultsChore(t *testing.T) {
+func TestClassifierAIErrorIsUnmapped(t *testing.T) {
 	ai := &stubAI{err: errors.New("boom")}
-	c := NewClassifier(NewRuleEngine(sampleClassify), ai)
+	c := classifierFor(ai)
 
-	wt, src := c.Classify(context.Background(), epic("do the thing", "nothing", nil, nil))
-	if wt != domain.WorkChore || src != domain.SourceUnknown {
-		t.Errorf("got %q/%q, want chore/unknown", wt, src)
+	ref := c.Classify(context.Background(), epic("do the thing", "nothing", nil, nil))
+	if ref.Key != "" || ref.Source != domain.SourceUnknown {
+		t.Errorf("got %q/%q, want empty/unknown", ref.Key, ref.Source)
 	}
 }
 
-func TestClassifierNoAIDefaultsChore(t *testing.T) {
-	c := NewClassifier(NewRuleEngine(sampleClassify), nil)
+func TestClassifierNoAIIsUnmapped(t *testing.T) {
+	c := classifierFor(nil)
 
-	wt, src := c.Classify(context.Background(), epic("do the thing", "nothing", nil, nil))
-	if wt != domain.WorkChore || src != domain.SourceUnknown {
-		t.Errorf("got %q/%q, want chore/unknown", wt, src)
+	ref := c.Classify(context.Background(), epic("do the thing", "nothing", nil, nil))
+	if ref.Key != "" || ref.Source != domain.SourceUnknown {
+		t.Errorf("got %q/%q, want empty/unknown", ref.Key, ref.Source)
 	}
 }

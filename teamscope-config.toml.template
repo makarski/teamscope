@@ -40,19 +40,56 @@ model = "claude-3-5-haiku-latest"
 token = "<slack-bot-token>"
 channel = "#team-progress"
 
-# The goals prompt is the human-provided definition of "aligned".
-# Leave empty to disable alignment scoring.
-[goals]
-prompt = """
-This quarter we focus on shipping billing v2, reducing onboarding friction,
-and improving reliability. We are not starting new platforms.
-"""
+# --- Rubrics -----------------------------------------------------------------
+# A rubric is the named set of criteria a team is measured against. Each active
+# epic is mapped to the criterion it best serves, and (with AI) judged on
+# whether it advances that criterion.
+#
+# source = "static"      criteria are listed inline (see [[rubrics.criteria]])
+# source = "jira_label"  criteria are the epics carrying `label` in
+#                        `label_project` -- one criterion per epic, fully
+#                        automated from Jira with no AI.
 
-# Keyword hints for the rule engine (labels/components take priority).
-[classify]
-business = ["billing", "revenue", "customer", "onboarding", "checkout"]
-chore = ["refactor", "upgrade", "tech debt", "flaky", "migration", "cleanup"]
-rnd = ["spike", "poc", "prototype", "experiment", "research"]
+# Example 1: a classic work-type split, defined inline.
+[[rubrics]]
+name = "work"
+source = "static"
+
+  [[rubrics.criteria]]
+  key = "business"
+  title = "Customer / revenue value"
+  lens = "business"
+
+  [[rubrics.criteria]]
+  key = "chore"
+  title = "Maintenance and tech debt"
+  lens = "operations"
+
+  [[rubrics.criteria]]
+  key = "rnd"
+  title = "Research and experiments"
+  lens = "product"
+
+  # Keyword hints steer the deterministic rule engine (labels and components
+  # matching a criterion key always win first). Text-only fallback below.
+  [[rubrics.keyword_hints]]
+  keyword = "billing"
+  criterion = "business"
+  [[rubrics.keyword_hints]]
+  keyword = "refactor"
+  criterion = "chore"
+  [[rubrics.keyword_hints]]
+  keyword = "spike"
+  criterion = "rnd"
+
+# Example 2: a readiness rubric sourced from Jira labels. Every epic in
+# `label_project` carrying `label` becomes one criterion.
+[[rubrics]]
+name = "readiness"
+source = "jira_label"
+label = "product-readiness"
+label_project = "PT"
+lens = "product"
 
 # Where snapshots are persisted.
 [store]
@@ -62,8 +99,10 @@ path = "teamscope.db"
 name = "Payments"
 jira_projects = ["PT"]
 github_repos = ["your-org/payments"]
+rubric = "readiness"
 
 [[teams]]
 name = "Platform"
 jira_projects = ["PLAT"]
 github_repos = ["your-org/platform"]
+rubric = "work"

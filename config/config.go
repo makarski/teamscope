@@ -19,8 +19,7 @@ type (
 		Anthropic *Anthropic `toml:"anthropic"`
 		Bedrock   *Bedrock   `toml:"bedrock"`
 		Slack     *Slack     `toml:"slack"`
-		Goals     *Goals     `toml:"goals"`
-		Classify  *Classify  `toml:"classify"`
+		Rubrics   []Rubric   `toml:"rubrics"`
 		Teams     []Team     `toml:"teams"`
 		Store     *Store     `toml:"store"`
 	}
@@ -66,21 +65,40 @@ type (
 		Channel string `toml:"channel"`
 	}
 
-	Goals struct {
-		Prompt string `toml:"prompt"`
+	// Rubric defines a set of criteria a team is measured against, resolved
+	// from a pluggable source.
+	//
+	//   source = "static"      criteria are listed inline below
+	//   source = "jira_label"  criteria are the epics carrying Label in
+	//                          LabelProject (one criterion per epic)
+	Rubric struct {
+		Name         string        `toml:"name"`
+		Source       string        `toml:"source"`
+		Lens         string        `toml:"lens"`
+		Label        string        `toml:"label"`
+		LabelProject string        `toml:"label_project"`
+		Criteria     []Criterion   `toml:"criteria"`
+		KeywordHints []KeywordHint `toml:"keyword_hints"`
 	}
 
-	// Classify holds keyword hints per work type used by the rule engine.
-	Classify struct {
-		Business []string `toml:"business"`
-		Chore    []string `toml:"chore"`
-		RnD      []string `toml:"rnd"`
+	Criterion struct {
+		Key    string  `toml:"key"`
+		Title  string  `toml:"title"`
+		Status string  `toml:"status"`
+		Weight float64 `toml:"weight"`
+		Lens   string  `toml:"lens"`
+	}
+
+	KeywordHint struct {
+		Keyword   string `toml:"keyword"`
+		Criterion string `toml:"criterion"`
 	}
 
 	Team struct {
 		Name         string   `toml:"name"`
 		JiraProjects []string `toml:"jira_projects"`
 		GitHubRepos  []string `toml:"github_repos"`
+		Rubric       string   `toml:"rubric"`
 	}
 
 	Store struct {
@@ -148,13 +166,8 @@ func (c *Config) validate() error {
 	if len(c.Teams) == 0 {
 		return fmt.Errorf("config: at least one [[teams]] entry is required")
 	}
-	for _, t := range c.Teams {
-		if t.Name == "" {
-			return fmt.Errorf("config: every team requires a name")
-		}
-		if len(t.JiraProjects) == 0 {
-			return fmt.Errorf("config: team %q requires at least one jira_project", t.Name)
-		}
+	if err := c.validateTeams(); err != nil {
+		return err
 	}
 	if c.Store == nil || c.Store.Path == "" {
 		return fmt.Errorf("config: [store] path is required")
@@ -162,13 +175,44 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// GoalsHash returns a stable fingerprint of the current goals prompt so
-// snapshots can be tied to the goals definition that produced them.
-func (c *Config) GoalsHash() string {
-	prompt := ""
-	if c.Goals != nil {
-		prompt = c.Goals.Prompt
+func (c *Config) validateTeams() error {
+	for _, t := range c.Teams {
+		if t.Name == "" {
+			return fmt.Errorf("config: every team requires a name")
+		}
+		if len(t.JiraProjects) == 0 {
+			return fmt.Errorf("config: team %q requires at least one jira_project", t.Name)
+		}
+		if t.Rubric == "" {
+			return fmt.Errorf("config: team %q requires a rubric", t.Name)
+		}
+		if _, ok := c.RubricByName(t.Rubric); !ok {
+			return fmt.Errorf("config: team %q references unknown rubric %q", t.Name, t.Rubric)
+		}
 	}
-	sum := sha256.Sum256([]byte(prompt))
+	return nil
+}
+
+// RubricByName looks up a configured rubric by name.
+func (c *Config) RubricByName(name string) (Rubric, bool) {
+	for _, r := range c.Rubrics {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return Rubric{}, false
+}
+
+// GoalsHash returns a stable fingerprint of the rubric definitions so
+// snapshots can be tied to the goals configuration that produced them.
+func (c *Config) GoalsHash() string {
+	var b strings.Builder
+	for _, r := range c.Rubrics {
+		fmt.Fprintf(&b, "%s|%s|%s|%s;", r.Name, r.Source, r.Label, r.LabelProject)
+		for _, cr := range r.Criteria {
+			fmt.Fprintf(&b, "%s=%s,", cr.Key, cr.Title)
+		}
+	}
+	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:8])
 }

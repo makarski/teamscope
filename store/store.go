@@ -20,25 +20,44 @@ const schema = `
 CREATE TABLE IF NOT EXISTS snapshots (
 	id            INTEGER PRIMARY KEY AUTOINCREMENT,
 	team          TEXT    NOT NULL,
+	rubric        TEXT    NOT NULL,
 	taken_at      TEXT    NOT NULL,
-	goals_hash    TEXT    NOT NULL,
-	pct_business  REAL    NOT NULL,
-	pct_chore     REAL    NOT NULL,
-	pct_rnd       REAL    NOT NULL
+	goals_hash    TEXT    NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_snapshots_team_taken
 	ON snapshots(team, taken_at DESC);
+
+CREATE TABLE IF NOT EXISTS criterion_mix (
+	snapshot_id   INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+	criterion_key TEXT    NOT NULL,
+	share         REAL    NOT NULL,
+	PRIMARY KEY (snapshot_id, criterion_key)
+);
+
+CREATE TABLE IF NOT EXISTS criteria (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	snapshot_id   INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+	key           TEXT    NOT NULL,
+	title         TEXT    NOT NULL,
+	status        TEXT    NOT NULL,
+	weight        REAL    NOT NULL,
+	lens          TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_criteria_snapshot
+	ON criteria(snapshot_id);
 
 CREATE TABLE IF NOT EXISTS epics (
 	id            INTEGER PRIMARY KEY AUTOINCREMENT,
 	snapshot_id   INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
 	key           TEXT    NOT NULL,
 	summary       TEXT    NOT NULL,
-	work_type     TEXT    NOT NULL,
+	criterion_key TEXT    NOT NULL,
 	class_source  TEXT    NOT NULL,
-	alignment     TEXT    NOT NULL,
+	advances      INTEGER NOT NULL,
 	align_note    TEXT    NOT NULL,
+	lens          TEXT    NOT NULL,
 	progress      REAL    NOT NULL,
 	status        TEXT    NOT NULL,
 	gh_prs        INTEGER NOT NULL,
@@ -72,7 +91,8 @@ func (s *Store) Close() error {
 
 const timeLayout = time.RFC3339
 
-// Save writes a snapshot and its epics in a single transaction, returning the new id.
+// Save writes a snapshot, its criterion mix and epics in a single transaction,
+// returning the new id.
 func (s *Store) Save(ctx context.Context, snap domain.Snapshot) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -80,43 +100,18 @@ func (s *Store) Save(ctx context.Context, snap domain.Snapshot) (int64, error) {
 	}
 	defer tx.Rollback()
 
-	mix := snap.Mix()
-	res, err := tx.ExecContext(ctx,
-		`INSERT INTO snapshots (team, taken_at, goals_hash, pct_business, pct_chore, pct_rnd)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		snap.Team,
-		snap.TakenAt.UTC().Format(timeLayout),
-		snap.GoalsHash,
-		mix[domain.WorkBusiness],
-		mix[domain.WorkChore],
-		mix[domain.WorkRnD],
-	)
+	snapID, err := insertSnapshot(ctx, tx, snap)
 	if err != nil {
-		return 0, fmt.Errorf("store: insert snapshot: %w", err)
+		return 0, err
 	}
-
-	snapID, err := res.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("store: snapshot id: %w", err)
+	if err := insertCriteria(ctx, tx, snapID, snap.Rubric.Criteria); err != nil {
+		return 0, err
 	}
-
-	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO epics
-		 (snapshot_id, key, summary, work_type, class_source, alignment, align_note, progress, status, gh_prs, gh_commits)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-	if err != nil {
-		return 0, fmt.Errorf("store: prepare epic insert: %w", err)
+	if err := insertMix(ctx, tx, snapID, snap.Mix()); err != nil {
+		return 0, err
 	}
-	defer stmt.Close()
-
-	for _, e := range snap.Epics {
-		if _, err := stmt.ExecContext(ctx,
-			snapID, e.Key, e.Summary, string(e.WorkType), string(e.ClassSource),
-			string(e.Alignment), e.AlignNote, e.Progress, string(e.Status),
-			e.Activity.PullRequests, e.Activity.Commits,
-		); err != nil {
-			return 0, fmt.Errorf("store: insert epic %s: %w", e.Key, err)
-		}
+	if err := insertEpics(ctx, tx, snapID, snap.Epics); err != nil {
+		return 0, err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -125,10 +120,91 @@ func (s *Store) Save(ctx context.Context, snap domain.Snapshot) (int64, error) {
 	return snapID, nil
 }
 
+func insertSnapshot(ctx context.Context, tx *sql.Tx, snap domain.Snapshot) (int64, error) {
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO snapshots (team, rubric, taken_at, goals_hash)
+		 VALUES (?, ?, ?, ?)`,
+		snap.Team, snap.Rubric.Name,
+		snap.TakenAt.UTC().Format(timeLayout), snap.GoalsHash,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("store: insert snapshot: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("store: snapshot id: %w", err)
+	}
+	return id, nil
+}
+
+func insertCriteria(ctx context.Context, tx *sql.Tx, snapID int64, criteria []domain.Criterion) error {
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO criteria (snapshot_id, key, title, status, weight, lens)
+		 VALUES (?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("store: prepare criteria insert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, c := range criteria {
+		if _, err := stmt.ExecContext(ctx,
+			snapID, c.Key, c.Title, string(c.Status), c.Weight, string(c.Lens),
+		); err != nil {
+			return fmt.Errorf("store: insert criterion %q: %w", c.Key, err)
+		}
+	}
+	return nil
+}
+
+func insertMix(ctx context.Context, tx *sql.Tx, snapID int64, mix map[string]float64) error {
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO criterion_mix (snapshot_id, criterion_key, share) VALUES (?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("store: prepare mix insert: %w", err)
+	}
+	defer stmt.Close()
+
+	for key, share := range mix {
+		if _, err := stmt.ExecContext(ctx, snapID, key, share); err != nil {
+			return fmt.Errorf("store: insert mix %q: %w", key, err)
+		}
+	}
+	return nil
+}
+
+func insertEpics(ctx context.Context, tx *sql.Tx, snapID int64, epics []domain.ClassifiedEpic) error {
+	stmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO epics
+		 (snapshot_id, key, summary, criterion_key, class_source, advances, align_note, lens, progress, status, gh_prs, gh_commits)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("store: prepare epic insert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, e := range epics {
+		if _, err := stmt.ExecContext(ctx,
+			snapID, e.Key, e.Summary, e.Criterion.Key, string(e.Criterion.Source),
+			boolToInt(e.Criterion.Advances), e.Criterion.Note, string(e.Lens),
+			e.Progress, string(e.Status), e.Activity.PullRequests, e.Activity.Commits,
+		); err != nil {
+			return fmt.Errorf("store: insert epic %s: %w", e.Key, err)
+		}
+	}
+	return nil
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // Latest returns the most recent snapshot for a team, or sql.ErrNoRows if none exist.
 func (s *Store) Latest(ctx context.Context, team string) (domain.Snapshot, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, team, taken_at, goals_hash
+		`SELECT id, team, rubric, taken_at, goals_hash
 		 FROM snapshots WHERE team = ? ORDER BY taken_at DESC LIMIT 1`, team)
 
 	snap, err := scanSnapshotMeta(row)
@@ -141,6 +217,12 @@ func (s *Store) Latest(ctx context.Context, team string) (domain.Snapshot, error
 		return domain.Snapshot{}, err
 	}
 	snap.Epics = epics
+
+	criteria, err := s.loadCriteria(ctx, snap.ID)
+	if err != nil {
+		return domain.Snapshot{}, err
+	}
+	snap.Rubric.Criteria = criteria
 	return snap, nil
 }
 
@@ -148,7 +230,7 @@ func (s *Store) Latest(ctx context.Context, team string) (domain.Snapshot, error
 // Epics are not hydrated; use Latest for full detail.
 func (s *Store) Trend(ctx context.Context, team string, n int) ([]domain.Snapshot, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, team, taken_at, goals_hash
+		`SELECT id, team, rubric, taken_at, goals_hash
 		 FROM snapshots WHERE team = ? ORDER BY taken_at DESC LIMIT ?`, team, n)
 	if err != nil {
 		return nil, fmt.Errorf("store: query trend: %w", err)
@@ -197,7 +279,7 @@ func scanSnapshotMeta(sc scanner) (domain.Snapshot, error) {
 		snap    domain.Snapshot
 		takenAt string
 	)
-	if err := sc.Scan(&snap.ID, &snap.Team, &takenAt, &snap.GoalsHash); err != nil {
+	if err := sc.Scan(&snap.ID, &snap.Team, &snap.Rubric.Name, &takenAt, &snap.GoalsHash); err != nil {
 		return domain.Snapshot{}, err
 	}
 	t, err := time.Parse(timeLayout, takenAt)
@@ -208,9 +290,34 @@ func scanSnapshotMeta(sc scanner) (domain.Snapshot, error) {
 	return snap, nil
 }
 
+func (s *Store) loadCriteria(ctx context.Context, snapID int64) ([]domain.Criterion, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT key, title, status, weight, lens
+		 FROM criteria WHERE snapshot_id = ? ORDER BY id`, snapID)
+	if err != nil {
+		return nil, fmt.Errorf("store: query criteria: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.Criterion
+	for rows.Next() {
+		var (
+			c            domain.Criterion
+			status, lens string
+		)
+		if err := rows.Scan(&c.Key, &c.Title, &status, &c.Weight, &lens); err != nil {
+			return nil, fmt.Errorf("store: scan criterion: %w", err)
+		}
+		c.Status = domain.Status(status)
+		c.Lens = domain.Lens(lens)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) loadEpics(ctx context.Context, snapID int64) ([]domain.ClassifiedEpic, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT key, summary, work_type, class_source, alignment, align_note, progress, status, gh_prs, gh_commits
+		`SELECT key, summary, criterion_key, class_source, advances, align_note, lens, progress, status, gh_prs, gh_commits
 		 FROM epics WHERE snapshot_id = ? ORDER BY id`, snapID)
 	if err != nil {
 		return nil, fmt.Errorf("store: query epics: %w", err)
@@ -219,21 +326,31 @@ func (s *Store) loadEpics(ctx context.Context, snapID int64) ([]domain.Classifie
 
 	var out []domain.ClassifiedEpic
 	for rows.Next() {
-		var (
-			e               domain.ClassifiedEpic
-			wt, src, al, st string
-		)
-		if err := rows.Scan(
-			&e.Key, &e.Summary, &wt, &src, &al, &e.AlignNote,
-			&e.Progress, &st, &e.Activity.PullRequests, &e.Activity.Commits,
-		); err != nil {
-			return nil, fmt.Errorf("store: scan epic: %w", err)
+		e, err := scanEpic(rows)
+		if err != nil {
+			return nil, err
 		}
-		e.WorkType = domain.WorkType(wt)
-		e.ClassSource = domain.ClassSource(src)
-		e.Alignment = domain.Alignment(al)
-		e.Status = domain.ProgressStatus(st)
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+func scanEpic(rows *sql.Rows) (domain.ClassifiedEpic, error) {
+	var (
+		e                      domain.ClassifiedEpic
+		critKey, src, lens, st string
+		advances               int
+	)
+	if err := rows.Scan(
+		&e.Key, &e.Summary, &critKey, &src, &advances, &e.Criterion.Note,
+		&lens, &e.Progress, &st, &e.Activity.PullRequests, &e.Activity.Commits,
+	); err != nil {
+		return domain.ClassifiedEpic{}, fmt.Errorf("store: scan epic: %w", err)
+	}
+	e.Criterion.Key = critKey
+	e.Criterion.Source = domain.ClassSource(src)
+	e.Criterion.Advances = advances != 0
+	e.Lens = domain.Lens(lens)
+	e.Status = domain.ProgressStatus(st)
+	return e, nil
 }

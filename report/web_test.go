@@ -13,35 +13,71 @@ import (
 
 func snapshot() domain.Snapshot {
 	return domain.Snapshot{
-		Team:    "Payments",
+		Team: "Payments",
+		Rubric: domain.Rubric{Name: "readiness", Criteria: []domain.Criterion{
+			{Key: "billing", Title: "Billing", Status: "open", Lens: domain.LensBusiness},
+			{Key: "security", Title: "Security", Status: "open", Lens: domain.LensProduct},
+			{Key: "telemetry", Title: "Telemetry", Status: "done"},
+		}},
 		TakenAt: time.Date(2026, 7, 15, 10, 0, 0, 0, time.UTC),
 		Epics: []domain.ClassifiedEpic{
-			{Key: "PT-2", Summary: "Upgrade", WorkType: domain.WorkChore, Alignment: domain.AlignOffTrack, AlignNote: "not a goal", Status: domain.StatusOngoing, Progress: 0.2},
-			{Key: "PT-1", Summary: "Billing", WorkType: domain.WorkBusiness, Alignment: domain.AlignAligned, Status: domain.StatusOverdue, Progress: 0.5},
+			// unmapped chore
+			{Key: "PT-2", Summary: "Upgrade", Criterion: domain.CriterionRef{Key: ""}, Status: domain.StatusOngoing, Progress: 0.2},
+			// advances billing, but overdue
+			{Key: "PT-1", Summary: "Billing", Criterion: domain.CriterionRef{Key: "billing", Advances: true}, Lens: domain.LensBusiness, Status: domain.StatusOverdue, Progress: 0.5},
 		},
 	}
 }
 
-func TestNewTeamView(t *testing.T) {
+func TestNewTeamViewMeta(t *testing.T) {
 	v := NewTeamView(snapshot())
-
-	if v.Team != "Payments" || v.EpicCount != 2 {
-		t.Errorf("meta wrong: %+v", v)
+	if v.Team != "Payments" {
+		t.Errorf("team = %q, want Payments", v.Team)
 	}
-	// epics sorted by key
+	if v.EpicCount != 2 {
+		t.Errorf("epic count = %d, want 2", v.EpicCount)
+	}
+	if v.Rubric != "readiness" {
+		t.Errorf("rubric = %q, want readiness", v.Rubric)
+	}
 	if v.Epics[0].Key != "PT-1" {
 		t.Errorf("epics not sorted: %s first", v.Epics[0].Key)
 	}
-	// mix 50/50 business/chore
-	if v.Mix[0].WorkType != domain.WorkBusiness || v.Mix[0].Percent != 50 {
-		t.Errorf("mix wrong: %+v", v.Mix)
+}
+
+func TestNewTeamViewCoverage(t *testing.T) {
+	v := NewTeamView(snapshot())
+	if len(v.Coverage) != 3 || v.Coverage[0].Key != "billing" {
+		t.Fatalf("coverage wrong: %+v", v.Coverage)
 	}
-	if v.Alignment.Aligned != 1 || v.Alignment.OffTrack != 1 {
-		t.Errorf("alignment breakdown wrong: %+v", v.Alignment)
+	if v.Coverage[0].Advancing != 1 || v.Coverage[0].Total != 1 {
+		t.Errorf("billing coverage wrong: %+v", v.Coverage[0])
 	}
-	// PT-1 overdue + PT-2 off-track => both flagged
-	if len(v.OffTrack) != 2 {
-		t.Errorf("off-track = %d, want 2", len(v.OffTrack))
+}
+
+func TestNewTeamViewDrift(t *testing.T) {
+	v := NewTeamView(snapshot())
+	// security is open with no epics -> drift; telemetry is done -> not drift
+	if len(v.Drift) != 1 || v.Drift[0].Key != "security" {
+		t.Errorf("drift wrong: %+v", v.Drift)
+	}
+}
+
+func TestNewTeamViewUnmappedAndOffTrack(t *testing.T) {
+	v := NewTeamView(snapshot())
+	if len(v.Unmapped) != 1 || v.Unmapped[0].Key != "PT-2" {
+		t.Errorf("unmapped wrong: %+v", v.Unmapped)
+	}
+	if len(v.OffTrack) != 1 || v.OffTrack[0].Key != "PT-1" {
+		t.Errorf("off-track wrong: %+v", v.OffTrack)
+	}
+}
+
+func TestNewTeamViewBlockerFocus(t *testing.T) {
+	v := NewTeamView(snapshot())
+	// only PT-1 is on an open criterion (PT-2 unmapped) -> 50%
+	if v.BlockerFocus != 50 {
+		t.Errorf("blocker focus = %d, want 50", v.BlockerFocus)
 	}
 }
 
@@ -87,12 +123,11 @@ func TestWebRender(t *testing.T) {
 	}
 	html := buf.String()
 
-	for _, want := range []string{"Payments", "PT-1", "Billing", "off-track 1", "Needs attention"} {
+	for _, want := range []string{"Payments", "PT-1", "Billing", "blocker focus 50%", "Drift", "security"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("html missing %q", want)
 		}
 	}
-	// team with no snapshot is skipped, not errored
 	if strings.Contains(html, ">Empty<") {
 		t.Error("empty team should be skipped")
 	}

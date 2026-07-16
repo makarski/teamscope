@@ -5,61 +5,61 @@ import (
 	"testing"
 
 	"github.com/slack-go/slack"
-
-	"github.com/makarski/teamscope/domain"
 )
 
-func TestBuildBlocksWithAttention(t *testing.T) {
+func TestBuildBlocksWithDrift(t *testing.T) {
 	view := NewTeamView(snapshot())
 	blocks := buildBlocks(view)
 
-	// header + context + mix + alignment + divider + attention = 6
-	if len(blocks) != 6 {
-		t.Fatalf("block count = %d, want 6", len(blocks))
+	// header + context + focus + coverage + divider + drift + unmapped = 7
+	if len(blocks) != 7 {
+		t.Fatalf("block count = %d, want 7", len(blocks))
 	}
 	if _, ok := blocks[0].(*slack.HeaderBlock); !ok {
 		t.Errorf("first block is not a header: %T", blocks[0])
 	}
 }
 
-func TestBuildBlocksNoAttention(t *testing.T) {
+func TestBuildBlocksClean(t *testing.T) {
 	view := TeamView{
 		Team:    "Clean",
+		Rubric:  "readiness",
 		TakenAt: "2026-07-15",
-		Mix:     mixSlices(map[domain.WorkType]float64{domain.WorkBusiness: 1}),
+		Coverage: []CriterionCoverage{
+			{Key: "billing", Title: "Billing", Status: "done", Advancing: 1, Total: 1, Share: 100},
+		},
 	}
 	blocks := buildBlocks(view)
 
-	// no divider/attention when nothing is off-track
+	// no divider/drift/unmapped when everything is covered
 	if len(blocks) != 4 {
 		t.Errorf("block count = %d, want 4", len(blocks))
 	}
 }
 
-func TestMixLine(t *testing.T) {
-	line := mixLine(mixSlices(map[domain.WorkType]float64{
-		domain.WorkBusiness: 0.5, domain.WorkChore: 0.3, domain.WorkRnD: 0.2,
-	}))
-	for _, want := range []string{"business *50%*", "chore *30%*", "rnd *20%*"} {
+func TestCoverageLine(t *testing.T) {
+	line := coverageLine([]CriterionCoverage{
+		{Key: "billing", Title: "Billing", Status: "open", Advancing: 1, Total: 2, Share: 40},
+	})
+	for _, want := range []string{"billing", "Billing", "advancing 1/2", "40%"} {
 		if !strings.Contains(line, want) {
-			t.Errorf("mix line missing %q: %s", want, line)
+			t.Errorf("coverage line missing %q: %s", want, line)
 		}
 	}
 }
 
-func TestAttentionReason(t *testing.T) {
-	withNote := EpicView{AlignNote: "off goal", Status: domain.StatusOverdue}
-	if got := attentionReason(withNote); got != "off goal" {
-		t.Errorf("reason = %q, want note", got)
-	}
-	noNote := EpicView{Status: domain.StatusOverdue}
-	if got := attentionReason(noNote); got != "overdue" {
-		t.Errorf("reason = %q, want status", got)
+func TestFocusLine(t *testing.T) {
+	view := NewTeamView(snapshot())
+	line := focusLine(view)
+	for _, want := range []string{"blocker focus *50%*", "uncovered", "unmapped *1*"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("focus line missing %q: %s", want, line)
+		}
 	}
 }
 
-func TestWorkTypeEmoji(t *testing.T) {
-	if workTypeEmoji(domain.WorkBusiness) == workTypeEmoji(domain.WorkChore) {
-		t.Error("distinct work types should have distinct emoji")
+func TestStatusEmoji(t *testing.T) {
+	if statusEmoji("done") == statusEmoji("open") {
+		t.Error("distinct statuses should have distinct emoji")
 	}
 }

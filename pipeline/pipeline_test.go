@@ -25,6 +25,10 @@ func rawEpic(key, summary, status string) ingest.RawEpic {
 	}
 }
 
+var testRubric = domain.Rubric{Name: "work", Criteria: []domain.Criterion{
+	{Key: "business", Title: "Business", Lens: domain.LensBusiness},
+}}
+
 type stubFetcher struct {
 	epics []ingest.RawEpic
 	err   error
@@ -32,21 +36,31 @@ type stubFetcher struct {
 
 func (s stubFetcher) FetchEpics(string) ([]ingest.RawEpic, error) { return s.epics, s.err }
 
+type stubSource struct{ err error }
+
+func (s stubSource) Rubric(context.Context, string) (domain.Rubric, error) {
+	return testRubric, s.err
+}
+
 type stubClassifier struct{}
 
-func (stubClassifier) Classify(context.Context, *ingest.RawEpic) (domain.WorkType, domain.ClassSource) {
-	return domain.WorkBusiness, domain.SourceLabel
+func (stubClassifier) Classify(context.Context, *ingest.RawEpic) domain.CriterionRef {
+	return domain.CriterionRef{Key: "business", Source: domain.SourceLabel}
 }
+
+type stubFactory struct{}
+
+func (stubFactory) For(domain.Rubric) Classifier { return stubClassifier{} }
 
 type stubAligner struct {
 	err error
 }
 
-func (s stubAligner) Score(context.Context, *ingest.RawEpic) (domain.Alignment, string, error) {
+func (s stubAligner) Score(context.Context, *ingest.RawEpic, domain.Criterion) (bool, string, error) {
 	if s.err != nil {
-		return "", "", s.err
+		return false, "", s.err
 	}
-	return domain.AlignAligned, "on target", nil
+	return true, "on target", nil
 }
 
 type stubStore struct {
@@ -60,8 +74,17 @@ func (s *stubStore) Save(_ context.Context, snap domain.Snapshot) (int64, error)
 
 var statusNames = config.StatusNames{Done: []string{"Done"}, ToDo: []string{"To Do"}}
 
-func newRunner(f Fetcher, a Aligner, store Store) *Runner {
-	r := NewRunner(f, stubClassifier{}, a, store, statusNames, "hash1")
+func newRunner(f Fetcher, src RubricSource, a Aligner, store Store) *Runner {
+	sources := map[string]RubricSource{"Payments": src, "P": src}
+	r := NewRunner(Deps{
+		Fetcher:     f,
+		Sources:     sources,
+		Factory:     stubFactory{},
+		Aligner:     a,
+		Store:       store,
+		StatusNames: statusNames,
+		GoalsHash:   "hash1",
+	})
 	r.now = func() time.Time { return time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC) }
 	return r
 }
@@ -69,7 +92,7 @@ func newRunner(f Fetcher, a Aligner, store Store) *Runner {
 func TestRunEnrichesAndSaves(t *testing.T) {
 	fetcher := stubFetcher{epics: []ingest.RawEpic{rawEpic("PT-1", "Billing", "Done")}}
 	store := &stubStore{}
-	runner := newRunner(fetcher, stubAligner{}, store)
+	runner := newRunner(fetcher, stubSource{}, stubAligner{}, store)
 
 	id, err := runner.Run(context.Background(), config.Team{Name: "Payments", JiraProjects: []string{"PT"}})
 	if err != nil {
@@ -79,53 +102,83 @@ func TestRunEnrichesAndSaves(t *testing.T) {
 		t.Errorf("id = %d, want 42", id)
 	}
 
-	snap := store.saved
-	if snap.Team != "Payments" || snap.GoalsHash != "hash1" {
-		t.Errorf("snapshot meta wrong: %+v", snap)
+	assertSnapshotMeta(t, store.saved)
+	assertEpicEnrichment(t, store.saved)
+}
+
+func assertSnapshotMeta(t *testing.T, snap domain.Snapshot) {
+	t.Helper()
+	if snap.Team != "Payments" {
+		t.Errorf("team = %q, want Payments", snap.Team)
 	}
+	if snap.GoalsHash != "hash1" {
+		t.Errorf("goals hash = %q, want hash1", snap.GoalsHash)
+	}
+	if snap.Rubric.Name != "work" {
+		t.Errorf("rubric = %q, want work", snap.Rubric.Name)
+	}
+}
+
+func assertEpicEnrichment(t *testing.T, snap domain.Snapshot) {
+	t.Helper()
 	if len(snap.Epics) != 1 {
 		t.Fatalf("want 1 epic, got %d", len(snap.Epics))
 	}
 	e := snap.Epics[0]
-	if e.Key != "PT-1" || e.WorkType != domain.WorkBusiness || e.Alignment != domain.AlignAligned {
-		t.Errorf("epic enrichment wrong: %+v", e)
+	if e.Key != "PT-1" {
+		t.Errorf("key = %q, want PT-1", e.Key)
+	}
+	if e.Criterion.Key != "business" || !e.Criterion.Advances {
+		t.Errorf("criterion wrong: %+v", e.Criterion)
+	}
+	if e.Lens != domain.LensBusiness {
+		t.Errorf("lens = %q, want business", e.Lens)
 	}
 	if e.Status != domain.StatusDone {
 		t.Errorf("status = %q, want done", e.Status)
 	}
 }
 
-func TestRunNilAlignerLeavesAlignmentEmpty(t *testing.T) {
+func TestRunNilAlignerLeavesAdvancesFalse(t *testing.T) {
 	fetcher := stubFetcher{epics: []ingest.RawEpic{rawEpic("PT-1", "Billing", "Done")}}
 	store := &stubStore{}
-	runner := newRunner(fetcher, nil, store)
+	runner := newRunner(fetcher, stubSource{}, nil, store)
 
 	if _, err := runner.Run(context.Background(), config.Team{Name: "P", JiraProjects: []string{"PT"}}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	if got := store.saved.Epics[0].Alignment; got != "" {
-		t.Errorf("alignment = %q, want empty", got)
+	if store.saved.Epics[0].Criterion.Advances {
+		t.Error("advances should be false with no aligner")
 	}
 }
 
 func TestRunAlignerErrorIsBestEffort(t *testing.T) {
 	fetcher := stubFetcher{epics: []ingest.RawEpic{rawEpic("PT-1", "Billing", "Done")}}
 	store := &stubStore{}
-	runner := newRunner(fetcher, stubAligner{err: errors.New("boom")}, store)
+	runner := newRunner(fetcher, stubSource{}, stubAligner{err: errors.New("boom")}, store)
 
 	if _, err := runner.Run(context.Background(), config.Team{Name: "P", JiraProjects: []string{"PT"}}); err != nil {
 		t.Fatalf("run should not fail on aligner error: %v", err)
 	}
-	if got := store.saved.Epics[0].Alignment; got != "" {
-		t.Errorf("alignment = %q, want empty on error", got)
+	if store.saved.Epics[0].Criterion.Advances {
+		t.Error("advances should be false on aligner error")
 	}
 }
 
 func TestRunFetchErrorPropagates(t *testing.T) {
 	fetcher := stubFetcher{err: errors.New("jira down")}
-	runner := newRunner(fetcher, stubAligner{}, &stubStore{})
+	runner := newRunner(fetcher, stubSource{}, stubAligner{}, &stubStore{})
 
 	if _, err := runner.Run(context.Background(), config.Team{Name: "P", JiraProjects: []string{"PT"}}); err == nil {
 		t.Error("expected fetch error to propagate")
+	}
+}
+
+func TestRunRubricSourceErrorPropagates(t *testing.T) {
+	fetcher := stubFetcher{epics: []ingest.RawEpic{rawEpic("PT-1", "Billing", "Done")}}
+	runner := newRunner(fetcher, stubSource{err: errors.New("confluence down")}, stubAligner{}, &stubStore{})
+
+	if _, err := runner.Run(context.Background(), config.Team{Name: "P", JiraProjects: []string{"PT"}}); err == nil {
+		t.Error("expected rubric source error to propagate")
 	}
 }

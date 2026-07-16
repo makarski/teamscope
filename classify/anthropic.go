@@ -11,9 +11,10 @@ import (
 	"github.com/makarski/teamscope/ingest"
 )
 
-const classifyMaxTokens = 16
+const classifyMaxTokens = 32
 
-// AnthropicClassifier asks Claude to pick a work type when rules are inconclusive.
+// AnthropicClassifier asks Claude to map an epic onto the best-fitting
+// criterion of a rubric when deterministic rules are inconclusive.
 type AnthropicClassifier struct {
 	client *anthropic.Client
 }
@@ -29,27 +30,35 @@ func NewAnthropicClassifier(cfg *config.Anthropic, bedrockCfg *config.Bedrock) *
 	return &AnthropicClassifier{client: client}
 }
 
-// Classify returns a work type inferred from the epic's text.
-func (ac *AnthropicClassifier) Classify(ctx context.Context, epic *ingest.RawEpic) (domain.WorkType, error) {
-	raw, err := ac.client.Complete(ctx, buildClassifyPrompt(epic), classifyMaxTokens)
+// Map returns the criterion key the epic best serves, chosen from the rubric.
+// It returns an empty key (no error) when the model judges that none applies.
+func (ac *AnthropicClassifier) Map(ctx context.Context, epic *ingest.RawEpic, rubric domain.Rubric) (string, error) {
+	raw, err := ac.client.Complete(ctx, buildMapPrompt(epic, rubric), classifyMaxTokens)
 	if err != nil {
 		return "", err
 	}
 
-	wt := domain.WorkType(strings.ToLower(strings.TrimSpace(raw)))
-	if !wt.Valid() {
-		return "", fmt.Errorf("classify: ai returned invalid work type %q", raw)
+	answer := strings.TrimSpace(raw)
+	if strings.EqualFold(answer, "none") || answer == "" {
+		return "", nil
 	}
-	return wt, nil
+	if _, ok := rubric.Find(answer); !ok {
+		return "", fmt.Errorf("classify: ai returned unknown criterion %q", raw)
+	}
+	return answer, nil
 }
 
-func buildClassifyPrompt(epic *ingest.RawEpic) string {
-	return fmt.Sprintf(
-		"Classify this software work item into exactly one category: "+
-			"business (customer/revenue value), chore (maintenance/tech-debt/upgrades), "+
-			"or rnd (research/experiments/spikes).\n\n"+
-			"Title and description:\n%s\n\n"+
-			"Answer with a single word: business, chore, or rnd.",
+func buildMapPrompt(epic *ingest.RawEpic, rubric domain.Rubric) string {
+	var b strings.Builder
+	b.WriteString("Map this work item to the single goal it best advances.\n\nGoals:\n")
+	for _, c := range rubric.Criteria {
+		fmt.Fprintf(&b, "- %s: %s\n", c.Key, c.Title)
+	}
+	fmt.Fprintf(&b,
+		"\nWork item:\n%s\n\n"+
+			"Answer with exactly one goal key from the list above, or \"none\" "+
+			"if no goal fits. Reply with the key only.",
 		epic.Text(),
 	)
+	return b.String()
 }

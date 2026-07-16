@@ -2,38 +2,64 @@ package domain
 
 import "time"
 
-// WorkType is the fixed taxonomy every epic is classified into.
-type WorkType string
+// Lens is an optional viewpoint a criterion is judged through. It lets the
+// same rubric split into product / business / operations readiness without the
+// engine knowing what any specific lens means.
+type Lens string
 
 const (
-	WorkBusiness WorkType = "business"
-	WorkChore    WorkType = "chore"
-	WorkRnD      WorkType = "rnd"
+	LensProduct    Lens = "product"
+	LensBusiness   Lens = "business"
+	LensOperations Lens = "operations"
+	LensNone       Lens = ""
 )
 
-func (w WorkType) Valid() bool {
-	switch w {
-	case WorkBusiness, WorkChore, WorkRnD:
-		return true
+// Status is a criterion's completion state.
+type Status string
+
+const (
+	CriterionOpen    Status = "open"
+	CriterionDone    Status = "done"
+	CriterionUnknown Status = ""
+)
+
+// Criterion is a single measurable goal within a rubric. It is deliberately
+// generic: it may be a product-readiness pillar, a work-type bucket
+// (business/chore/rnd), or anything else a RubricSource yields.
+type Criterion struct {
+	Key    string  `json:"key"`    // stable identifier, e.g. "security"
+	Title  string  `json:"title"`  // human-readable label
+	Status Status  `json:"status"` // open | done | unknown
+	Weight float64 `json:"weight"` // relative importance, default 1.0
+	Lens   Lens    `json:"lens"`
+}
+
+// Rubric is the named set of criteria a team is measured against.
+type Rubric struct {
+	Name     string      `json:"name"`
+	Criteria []Criterion `json:"criteria"`
+}
+
+// Keys returns the criterion keys in declaration order.
+func (r Rubric) Keys() []string {
+	keys := make([]string, 0, len(r.Criteria))
+	for _, c := range r.Criteria {
+		keys = append(keys, c.Key)
 	}
-	return false
+	return keys
 }
 
-// AllWorkTypes returns the taxonomy in a stable order for reporting.
-func AllWorkTypes() []WorkType {
-	return []WorkType{WorkBusiness, WorkChore, WorkRnD}
+// Find returns the criterion with the given key.
+func (r Rubric) Find(key string) (Criterion, bool) {
+	for _, c := range r.Criteria {
+		if c.Key == key {
+			return c, true
+		}
+	}
+	return Criterion{}, false
 }
 
-// Alignment scores an epic against the declared goals prompt.
-type Alignment string
-
-const (
-	AlignAligned  Alignment = "aligned"
-	AlignPartial  Alignment = "partial"
-	AlignOffTrack Alignment = "off_track"
-)
-
-// ClassSource records how a work type was decided, for auditability.
+// ClassSource records how an epic was mapped to a criterion, for auditability.
 type ClassSource string
 
 const (
@@ -43,6 +69,15 @@ const (
 	SourceAI        ClassSource = "ai"
 	SourceUnknown   ClassSource = "unknown"
 )
+
+// CriterionRef is the outcome of mapping one epic onto a rubric: which
+// criterion it serves, whether it advances that criterion, and how we decided.
+type CriterionRef struct {
+	Key      string      `json:"key"` // "" when the epic maps to no criterion
+	Advances bool        `json:"advances"`
+	Source   ClassSource `json:"source"`
+	Note     string      `json:"note"`
+}
 
 // ProgressStatus buckets an epic's delivery state (reused from roadsnap logic).
 type ProgressStatus string
@@ -60,42 +95,38 @@ type Activity struct {
 	Commits      int `json:"commits"`
 }
 
-// ClassifiedEpic is a single epic enriched with work type, alignment and progress.
+// ClassifiedEpic is a single epic enriched with its criterion mapping, lens
+// and progress.
 type ClassifiedEpic struct {
-	Key         string         `json:"key"`
-	Summary     string         `json:"summary"`
-	WorkType    WorkType       `json:"work_type"`
-	ClassSource ClassSource    `json:"class_source"`
-	Alignment   Alignment      `json:"alignment"`
-	AlignNote   string         `json:"align_note"`
-	Progress    float64        `json:"progress"`
-	Status      ProgressStatus `json:"status"`
-	Activity    Activity       `json:"activity"`
+	Key       string         `json:"key"`
+	Summary   string         `json:"summary"`
+	Criterion CriterionRef   `json:"criterion"`
+	Lens      Lens           `json:"lens"`
+	Progress  float64        `json:"progress"`
+	Status    ProgressStatus `json:"status"`
+	Activity  Activity       `json:"activity"`
 }
 
-// Snapshot is the point-in-time state for one team.
+// Snapshot is the point-in-time state for one team, measured against a rubric.
 type Snapshot struct {
 	ID        int64            `json:"id"`
 	Team      string           `json:"team"`
+	Rubric    Rubric           `json:"rubric"`
 	TakenAt   time.Time        `json:"taken_at"`
 	GoalsHash string           `json:"goals_hash"`
 	Epics     []ClassifiedEpic `json:"epics"`
 }
 
-// Mix returns the share of each work type across the snapshot's epics.
-// Shares sum to 1.0 (empty snapshot returns all zeros).
-func (s *Snapshot) Mix() map[WorkType]float64 {
-	mix := map[WorkType]float64{
-		WorkBusiness: 0,
-		WorkChore:    0,
-		WorkRnD:      0,
-	}
+// Mix returns the share of epics mapped to each criterion key. Shares sum to
+// 1.0 across all mapped epics; unmapped epics (empty key) are counted under "".
+func (s *Snapshot) Mix() map[string]float64 {
+	mix := map[string]float64{}
 	total := len(s.Epics)
 	if total == 0 {
 		return mix
 	}
 	for _, e := range s.Epics {
-		mix[e.WorkType]++
+		mix[e.Criterion.Key]++
 	}
 	for k := range mix {
 		mix[k] /= float64(total)

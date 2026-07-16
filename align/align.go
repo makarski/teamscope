@@ -1,4 +1,4 @@
-// Package align scores epics against a team's declared goals prompt.
+// Package align scores whether an epic advances the criterion it maps to.
 package align
 
 import (
@@ -15,57 +15,47 @@ import (
 
 const alignMaxTokens = 128
 
-// Scorer judges how well an epic serves the declared goals.
+// Scorer judges whether an epic advances a given criterion.
 type Scorer struct {
 	client *anthropic.Client
-	prompt string
 }
 
-// NewScorer builds a goals scorer. Returns nil when either the AI client or
-// the goals prompt is absent, so callers can skip alignment scoring.
-func NewScorer(cfg *config.Anthropic, bedrockCfg *config.Bedrock, goals *config.Goals) *Scorer {
+// NewScorer builds an advancement scorer. Returns nil when no AI client is
+// configured, so callers can skip advancement scoring.
+func NewScorer(cfg *config.Anthropic, bedrockCfg *config.Bedrock) *Scorer {
 	client := anthropic.New(cfg, bedrockCfg)
-	if client == nil || !hasGoals(goals) {
+	if client == nil {
 		return nil
 	}
-	return &Scorer{client: client, prompt: goals.Prompt}
-}
-
-func hasGoals(goals *config.Goals) bool {
-	return goals != nil && strings.TrimSpace(goals.Prompt) != ""
+	return &Scorer{client: client}
 }
 
 type scoreReply struct {
-	Alignment string `json:"alignment"`
-	Note      string `json:"note"`
+	Advances bool   `json:"advances"`
+	Note     string `json:"note"`
 }
 
-// Score returns the epic's alignment and a short explanatory note.
-func (s *Scorer) Score(ctx context.Context, epic *ingest.RawEpic) (domain.Alignment, string, error) {
-	raw, err := s.client.Complete(ctx, s.buildPrompt(epic), alignMaxTokens)
+// Score returns whether the epic advances the criterion, plus a short note.
+func (s *Scorer) Score(ctx context.Context, epic *ingest.RawEpic, criterion domain.Criterion) (bool, string, error) {
+	raw, err := s.client.Complete(ctx, s.buildPrompt(epic, criterion), alignMaxTokens)
 	if err != nil {
-		return "", "", err
+		return false, "", err
 	}
 
 	reply, err := parseReply(raw)
 	if err != nil {
-		return "", "", err
+		return false, "", err
 	}
-
-	alignment, err := normalizeAlignment(reply.Alignment)
-	if err != nil {
-		return "", "", err
-	}
-	return alignment, strings.TrimSpace(reply.Note), nil
+	return reply.Advances, strings.TrimSpace(reply.Note), nil
 }
 
-func (s *Scorer) buildPrompt(epic *ingest.RawEpic) string {
+func (s *Scorer) buildPrompt(epic *ingest.RawEpic, criterion domain.Criterion) string {
 	return fmt.Sprintf(
-		"Team goals:\n%s\n\n"+
+		"Goal:\n%s: %s\n\n"+
 			"Work item:\n%s\n\n"+
-			"Judge how well the work item serves the goals. Reply with JSON only: "+
-			`{"alignment":"aligned|partial|off_track","note":"<max 12 words>"}.`,
-		s.prompt, epic.Text(),
+			"Does the work item meaningfully advance the goal? Reply with JSON only: "+
+			`{"advances":true|false,"note":"<max 12 words>"}.`,
+		criterion.Key, criterion.Title, epic.Text(),
 	)
 }
 
@@ -91,17 +81,4 @@ func extractJSON(raw string) string {
 
 func validJSONBounds(start, end int) bool {
 	return start != -1 && end != -1 && end >= start
-}
-
-func normalizeAlignment(v string) (domain.Alignment, error) {
-	switch domain.Alignment(strings.ToLower(strings.TrimSpace(v))) {
-	case domain.AlignAligned:
-		return domain.AlignAligned, nil
-	case domain.AlignPartial:
-		return domain.AlignPartial, nil
-	case domain.AlignOffTrack:
-		return domain.AlignOffTrack, nil
-	default:
-		return "", fmt.Errorf("align: invalid alignment %q", v)
-	}
 }
