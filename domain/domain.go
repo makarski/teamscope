@@ -117,8 +117,9 @@ type Snapshot struct {
 	Epics     []ClassifiedEpic `json:"epics"`
 }
 
-// Mix returns the share of epics mapped to each criterion key. Shares sum to
-// 1.0 across all mapped epics; unmapped epics (empty key) are counted under "".
+// Mix returns the share of epics mapped to each criterion key. Shares are
+// computed over all epics in the snapshot and sum to 1.0; epics that mapped to
+// no criterion are counted under the empty key "".
 func (s *Snapshot) Mix() map[string]float64 {
 	mix := map[string]float64{}
 	total := len(s.Epics)

@@ -166,6 +166,9 @@ func (c *Config) validate() error {
 	if len(c.Teams) == 0 {
 		return fmt.Errorf("config: at least one [[teams]] entry is required")
 	}
+	if len(c.Rubrics) == 0 {
+		return fmt.Errorf("config: at least one [[rubrics]] entry is required")
+	}
 	if err := c.validateTeams(); err != nil {
 		return err
 	}
@@ -204,13 +207,18 @@ func (c *Config) RubricByName(name string) (Rubric, bool) {
 }
 
 // GoalsHash returns a stable fingerprint of the rubric definitions so
-// snapshots can be tied to the goals configuration that produced them.
+// snapshots can be tied to the goals configuration that produced them. It
+// includes every rubric input that affects classification or scoring: source,
+// label, lens, and each criterion's status, weight, lens plus keyword hints.
 func (c *Config) GoalsHash() string {
 	var b strings.Builder
 	for _, r := range c.Rubrics {
-		fmt.Fprintf(&b, "%s|%s|%s|%s;", r.Name, r.Source, r.Label, r.LabelProject)
+		fmt.Fprintf(&b, "%s|%s|%s|%s|%s;", r.Name, r.Source, r.Label, r.LabelProject, r.Lens)
 		for _, cr := range r.Criteria {
-			fmt.Fprintf(&b, "%s=%s,", cr.Key, cr.Title)
+			fmt.Fprintf(&b, "%s=%s:%s:%g:%s,", cr.Key, cr.Title, cr.Status, cr.Weight, cr.Lens)
+		}
+		for _, h := range r.KeywordHints {
+			fmt.Fprintf(&b, "%s>%s,", h.Keyword, h.Criterion)
 		}
 	}
 	sum := sha256.Sum256([]byte(b.String()))

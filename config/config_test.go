@@ -96,6 +96,14 @@ func TestRubricByName(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsMissingRubrics(t *testing.T) {
+	cfg := baseConfig()
+	cfg.Rubrics = nil
+	if err := cfg.validate(); err == nil {
+		t.Error("expected error when no rubrics are defined")
+	}
+}
+
 func TestGoalsHashStableAndSensitive(t *testing.T) {
 	cfg := baseConfig()
 	h1 := cfg.GoalsHash()
@@ -105,5 +113,22 @@ func TestGoalsHashStableAndSensitive(t *testing.T) {
 	cfg.Rubrics[0].Criteria[0].Title = "Changed"
 	if cfg.GoalsHash() == h1 {
 		t.Error("hash should change when a criterion changes")
+	}
+}
+
+func TestGoalsHashSensitiveToScoringInputs(t *testing.T) {
+	baseCfg := baseConfig()
+	base := baseCfg.GoalsHash()
+
+	withStatus := baseConfig()
+	withStatus.Rubrics[0].Criteria[0].Status = "done"
+	if withStatus.GoalsHash() == base {
+		t.Error("hash should change when criterion status changes")
+	}
+
+	withHint := baseConfig()
+	withHint.Rubrics[0].KeywordHints = []KeywordHint{{Keyword: "billing", Criterion: "business"}}
+	if withHint.GoalsHash() == base {
+		t.Error("hash should change when keyword hints change")
 	}
 }

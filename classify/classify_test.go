@@ -41,6 +41,23 @@ var workHints = []KeywordHint{
 	{Keyword: "experiment", CriterionKey: "rnd"},
 }
 
+func TestResolveKeyCaseInsensitive(t *testing.T) {
+	rubric := domain.Rubric{Criteria: []domain.Criterion{
+		{Key: "AP-942", Title: "Feature"},
+		{Key: "security", Title: "Security"},
+	}}
+
+	if key, ok := resolveKey(rubric, "ap-942"); !ok || key != "AP-942" {
+		t.Errorf("resolveKey(ap-942) = %q/%v, want AP-942/true", key, ok)
+	}
+	if key, ok := resolveKey(rubric, "SECURITY"); !ok || key != "security" {
+		t.Errorf("resolveKey(SECURITY) = %q/%v, want security/true", key, ok)
+	}
+	if _, ok := resolveKey(rubric, "missing"); ok {
+		t.Error("resolveKey(missing) should be false")
+	}
+}
+
 func TestRuleEngineCanonicalizesCasing(t *testing.T) {
 	re := NewRuleEngine(workRubric, workHints)
 

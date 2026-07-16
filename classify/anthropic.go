@@ -32,6 +32,8 @@ func NewAnthropicClassifier(cfg *config.Anthropic, bedrockCfg *config.Bedrock) *
 
 // Map returns the criterion key the epic best serves, chosen from the rubric.
 // It returns an empty key (no error) when the model judges that none applies.
+// The model's answer is resolved case-insensitively back to the exact
+// rubric-declared key so casing differences do not degrade to unmapped.
 func (ac *AnthropicClassifier) Map(ctx context.Context, epic *ingest.RawEpic, rubric domain.Rubric) (string, error) {
 	raw, err := ac.client.Complete(ctx, buildMapPrompt(epic, rubric), classifyMaxTokens)
 	if err != nil {
@@ -39,13 +41,24 @@ func (ac *AnthropicClassifier) Map(ctx context.Context, epic *ingest.RawEpic, ru
 	}
 
 	answer := strings.TrimSpace(raw)
-	if strings.EqualFold(answer, "none") || answer == "" {
+	if answer == "" || strings.EqualFold(answer, "none") {
 		return "", nil
 	}
-	if _, ok := rubric.Find(answer); !ok {
-		return "", fmt.Errorf("classify: ai returned unknown criterion %q", raw)
+	if key, ok := resolveKey(rubric, answer); ok {
+		return key, nil
 	}
-	return answer, nil
+	return "", fmt.Errorf("classify: ai returned unknown criterion %q", raw)
+}
+
+// resolveKey matches an answer to a rubric key case-insensitively and returns
+// the exact declared key.
+func resolveKey(rubric domain.Rubric, answer string) (string, bool) {
+	for _, c := range rubric.Criteria {
+		if strings.EqualFold(c.Key, answer) {
+			return c.Key, true
+		}
+	}
+	return "", false
 }
 
 func buildMapPrompt(epic *ingest.RawEpic, rubric domain.Rubric) string {
