@@ -92,6 +92,36 @@ func (jc *JiraClient) FetchEpics(project string) ([]RawEpic, error) {
 	return epics, nil
 }
 
+// FetchByLabel returns the epics in a project carrying the given label,
+// without child issues. Used to synthesize rubric criteria from Jira metadata.
+func (jc *JiraClient) FetchByLabel(project, label string) ([]RawEpic, error) {
+	jql := fmt.Sprintf(
+		`project = "%s" AND issuetype = Epic AND labels = "%s"`,
+		project, label,
+	)
+	raw, err := jc.search(jql)
+	if err != nil {
+		return nil, fmt.Errorf("ingest: fetch label %q in %s: %w", label, project, err)
+	}
+
+	epics := make([]RawEpic, 0, len(raw))
+	for _, item := range raw {
+		epics = append(epics, RawEpic{
+			Epic:        item.issue,
+			description: item.description,
+		})
+	}
+	return epics, nil
+}
+
+// EpicStatus returns the epic's own Jira status name.
+func (r *RawEpic) EpicStatus() string {
+	if r.Epic.Fields.Status == nil {
+		return ""
+	}
+	return r.Epic.Fields.Status.Name
+}
+
 func (jc *JiraClient) fetchEpicIssues(epicKey string) ([]jira.Issue, error) {
 	raw, err := jc.search(fmt.Sprintf("parent = %s", epicKey))
 	if err != nil {

@@ -1,10 +1,6 @@
 package align
 
-import (
-	"testing"
-
-	"github.com/makarski/teamscope/domain"
-)
+import "testing"
 
 func TestExtractJSON(t *testing.T) {
 	tests := []struct {
@@ -12,8 +8,8 @@ func TestExtractJSON(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"clean", `{"alignment":"aligned","note":"x"}`, `{"alignment":"aligned","note":"x"}`},
-		{"wrapped in prose", `Sure: {"alignment":"partial","note":"y"} done`, `{"alignment":"partial","note":"y"}`},
+		{"clean", `{"advances":true,"note":"x"}`, `{"advances":true,"note":"x"}`},
+		{"wrapped in prose", `Sure: {"advances":false,"note":"y"} done`, `{"advances":false,"note":"y"}`},
 		{"no braces returns raw", `nonsense`, `nonsense`},
 	}
 	for _, tt := range tests {
@@ -26,39 +22,26 @@ func TestExtractJSON(t *testing.T) {
 }
 
 func TestParseReply(t *testing.T) {
-	reply, err := parseReply(`prefix {"alignment":"off_track","note":"unrelated to goals"} suffix`)
+	reply, err := parseReply(`prefix {"advances":true,"note":"delivers the pillar"} suffix`)
 	if err != nil {
 		t.Fatalf("parseReply: %v", err)
 	}
-	if reply.Alignment != "off_track" || reply.Note != "unrelated to goals" {
+	if reply.Advances == nil {
+		t.Fatal("advances should be present")
+	}
+	if !*reply.Advances || reply.Note != "delivers the pillar" {
 		t.Errorf("unexpected reply: %+v", reply)
+	}
+}
+
+func TestParseReplyMissingAdvances(t *testing.T) {
+	if _, err := parseReply(`{"note":"no verdict"}`); err == nil {
+		t.Error("expected error when advances field is absent")
 	}
 }
 
 func TestParseReplyInvalid(t *testing.T) {
 	if _, err := parseReply("not json at all"); err == nil {
 		t.Error("expected error for non-json reply")
-	}
-}
-
-func TestNormalizeAlignment(t *testing.T) {
-	tests := []struct {
-		in      string
-		want    domain.Alignment
-		wantErr bool
-	}{
-		{"aligned", domain.AlignAligned, false},
-		{"  Partial ", domain.AlignPartial, false},
-		{"OFF_TRACK", domain.AlignOffTrack, false},
-		{"maybe", "", true},
-	}
-	for _, tt := range tests {
-		got, err := normalizeAlignment(tt.in)
-		if (err != nil) != tt.wantErr {
-			t.Errorf("normalizeAlignment(%q) err = %v, wantErr %v", tt.in, err, tt.wantErr)
-		}
-		if !tt.wantErr && got != tt.want {
-			t.Errorf("normalizeAlignment(%q) = %q, want %q", tt.in, got, tt.want)
-		}
 	}
 }

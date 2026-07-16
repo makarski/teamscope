@@ -22,20 +22,27 @@ func newTestStore(t *testing.T) *Store {
 
 func sampleSnapshot() domain.Snapshot {
 	return domain.Snapshot{
-		Team:      "Payments",
+		Team: "Payments",
+		Rubric: domain.Rubric{Name: "work", Criteria: []domain.Criterion{
+			{Key: "business", Title: "Business", Status: "open", Weight: 1, Lens: domain.LensBusiness},
+			{Key: "chore", Title: "Chore", Status: "open", Weight: 1},
+		}},
 		TakenAt:   time.Date(2026, 7, 15, 10, 0, 0, 0, time.UTC),
 		GoalsHash: "abc123",
 		Epics: []domain.ClassifiedEpic{
 			{
-				Key: "PT-1", Summary: "Billing v2", WorkType: domain.WorkBusiness,
-				ClassSource: domain.SourceLabel, Alignment: domain.AlignAligned,
-				AlignNote: "matches Q3 billing goal", Progress: 0.5, Status: domain.StatusOngoing,
+				Key: "PT-1", Summary: "Billing v2",
+				Criterion: domain.CriterionRef{
+					Key: "business", Source: domain.SourceLabel,
+					Advances: domain.AdvAdvances, Note: "matches Q3 billing goal",
+				},
+				Lens: domain.LensBusiness, Progress: 0.5, Status: domain.StatusOngoing,
 				Activity: domain.Activity{PullRequests: 3, Commits: 12},
 			},
 			{
-				Key: "PT-2", Summary: "Upgrade deps", WorkType: domain.WorkChore,
-				ClassSource: domain.SourceKeyword, Alignment: domain.AlignOffTrack,
-				Progress: 1.0, Status: domain.StatusDone,
+				Key: "PT-2", Summary: "Upgrade deps",
+				Criterion: domain.CriterionRef{Key: "chore", Source: domain.SourceKeyword},
+				Progress:  1.0, Status: domain.StatusDone,
 			},
 		},
 	}
@@ -58,15 +65,37 @@ func TestSaveAndLatestRoundTrip(t *testing.T) {
 		t.Fatalf("latest: %v", err)
 	}
 
+	assertMeta(t, got)
+	assertFirstEpic(t, got)
+}
+
+func assertMeta(t *testing.T, got domain.Snapshot) {
+	t.Helper()
 	if got.Team != "Payments" || got.GoalsHash != "abc123" {
 		t.Errorf("meta mismatch: %+v", got)
+	}
+	if got.Rubric.Name != "work" || len(got.Rubric.Criteria) != 2 {
+		t.Errorf("rubric not hydrated: %+v", got.Rubric)
 	}
 	if len(got.Epics) != 2 {
 		t.Fatalf("expected 2 epics, got %d", len(got.Epics))
 	}
+}
+
+func assertFirstEpic(t *testing.T, got domain.Snapshot) {
+	t.Helper()
 	e := got.Epics[0]
-	if e.Key != "PT-1" || e.WorkType != domain.WorkBusiness || e.Alignment != domain.AlignAligned {
-		t.Errorf("epic[0] mismatch: %+v", e)
+	if e.Key != "PT-1" {
+		t.Errorf("key = %q, want PT-1", e.Key)
+	}
+	if e.Criterion.Key != "business" {
+		t.Errorf("criterion key = %q, want business", e.Criterion.Key)
+	}
+	if e.Criterion.Advances != domain.AdvAdvances {
+		t.Error("criterion should advance")
+	}
+	if e.Lens != domain.LensBusiness {
+		t.Errorf("lens mismatch: %q", e.Lens)
 	}
 	if e.Activity.PullRequests != 3 || e.Activity.Commits != 12 {
 		t.Errorf("activity mismatch: %+v", e.Activity)
@@ -76,7 +105,7 @@ func TestSaveAndLatestRoundTrip(t *testing.T) {
 func TestMix(t *testing.T) {
 	snap := sampleSnapshot()
 	mix := snap.Mix()
-	if mix[domain.WorkBusiness] != 0.5 || mix[domain.WorkChore] != 0.5 {
+	if mix["business"] != 0.5 || mix["chore"] != 0.5 {
 		t.Errorf("unexpected mix: %+v", mix)
 	}
 }

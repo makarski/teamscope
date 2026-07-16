@@ -79,18 +79,20 @@ const dashboardTemplate = `<!DOCTYPE html>
   .team-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: .75rem; }
   .team-head h2 { margin: 0; font-size: 1.1rem; }
   .meta { font-size: .8rem; color: #8a90a2; }
-  .bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin: .5rem 0 1rem; }
-  .seg-business { background: #4f8cff; }
-  .seg-chore { background: #f0a83c; }
-  .seg-rnd { background: #8b5cf6; }
-  .legend { display: flex; gap: 1.25rem; font-size: .8rem; margin-bottom: 1rem; flex-wrap: wrap; }
-  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: .4rem; vertical-align: middle; }
-  .lg-business::before { background: #4f8cff; }
-  .lg-chore::before { background: #f0a83c; }
-  .lg-rnd::before { background: #8b5cf6; }
-  .align { display: flex; gap: 1rem; font-size: .82rem; margin-bottom: 1rem; }
+  .bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin: .5rem 0 1rem; background: #262b38; }
+  .seg-advancing { background: #4f8cff; }
+  .seg-mapped { background: #f0a83c; }
+  .align { display: flex; gap: 1rem; font-size: .82rem; margin-bottom: 1rem; flex-wrap: wrap; }
   .pill { padding: .15rem .55rem; border-radius: 999px; background: #262b38; }
   .pill.off { background: #5a1f23; color: #ffb4ba; }
+  .pill.ok { background: #1f3a24; color: #7ee787; }
+  .cov { width: 100%; border-collapse: collapse; font-size: .85rem; margin-bottom: 1rem; }
+  .cov td, .cov th { padding: .35rem .5rem; border-bottom: 1px solid #262b38; text-align: left; }
+  .cov .minibar { display: inline-block; height: 8px; border-radius: 4px; background: #4f8cff; vertical-align: middle; }
+  .cov .track { display: inline-block; width: 90px; height: 8px; border-radius: 4px; background: #262b38; vertical-align: middle; margin-right: .5rem; }
+  .st-done { color: #7ee787; }
+  .st-open { color: #ffcf7a; }
+  .st-blocked { color: #ff7b72; }
   table { width: 100%; border-collapse: collapse; font-size: .85rem; }
   th, td { text-align: left; padding: .45rem .5rem; border-bottom: 1px solid #262b38; }
   th { color: #8a90a2; font-weight: 600; }
@@ -104,46 +106,63 @@ const dashboardTemplate = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<h1>Teamscope &mdash; goal alignment &amp; work mix</h1>
+<h1>Teamscope &mdash; goal alignment &amp; focus</h1>
 {{if not .}}<p class="empty">No snapshots yet. Run <code>teamscope snapshot</code>.</p>{{end}}
 {{range .}}
 <section class="team">
   <div class="team-head">
     <h2>{{.Team}}</h2>
-    <span class="meta">{{.TakenAt}} &middot; {{.EpicCount}} epics</span>
-  </div>
-
-  <div class="bar">
-    {{range .Mix}}<div class="seg-{{.WorkType}}" style="width: {{.Percent}}%" title="{{.WorkType}} {{.Percent}}%"></div>{{end}}
-  </div>
-  <div class="legend">
-    {{range .Mix}}<span class="lg-{{.WorkType}}">{{.WorkType}} {{.Percent}}%</span>{{end}}
+    <span class="meta">rubric: {{.Rubric}} &middot; {{.TakenAt}} &middot; {{.EpicCount}} epics</span>
   </div>
 
   <div class="align">
-    <span class="pill">aligned {{.Alignment.Aligned}}</span>
-    <span class="pill">partial {{.Alignment.Partial}}</span>
-    <span class="pill off">off-track {{.Alignment.OffTrack}}</span>
-    <span class="pill">unscored {{.Alignment.Unknown}}</span>
+    <span class="pill ok">blocker focus {{.BlockerFocus}}%</span>
+    {{if .Drift}}<span class="pill off">drift: {{len .Drift}} uncovered</span>{{else}}<span class="pill ok">no drift</span>{{end}}
+    {{if .Unmapped}}<span class="pill off">unmapped {{len .Unmapped}}</span>{{end}}
+    {{range .Lenses}}<span class="pill">{{if .Lens}}{{.Lens}}{{else}}unlensed{{end}} {{.Percent}}%</span>{{end}}
   </div>
 
-  {{if .OffTrack}}
+  <table class="cov">
+    <thead><tr><th>Criterion</th><th>Status</th><th>Advancing</th><th>Coverage</th></tr></thead>
+    <tbody>
+      {{range .Coverage}}
+      <tr>
+        <td><strong>{{.Key}}</strong> {{.Title}}</td>
+        <td class="st-{{.Status}}">{{if .Status}}{{.Status}}{{else}}&mdash;{{end}}</td>
+        <td>{{.Advancing}} / {{.Total}}</td>
+        <td><span class="track"><span class="minibar" style="width: {{.Share}}%"></span></span>{{.Share}}%</td>
+      </tr>
+      {{end}}
+      {{if not .Coverage}}<tr><td colspan="4" class="empty">No rubric criteria resolved.</td></tr>{{end}}
+    </tbody>
+  </table>
+
+  {{if .Drift}}
   <div class="off-track">
-    <h3>Needs attention</h3>
+    <h3>Drift &mdash; open goals nobody is advancing</h3>
     <ul>
-      {{range .OffTrack}}<li><strong>{{.Key}}</strong> {{.Summary}} &mdash; {{if .AlignNote}}{{.AlignNote}}{{else}}{{.Status}}{{end}}</li>{{end}}
+      {{range .Drift}}<li><strong>{{.Key}}</strong> {{.Title}}</li>{{end}}
+    </ul>
+  </div>
+  {{end}}
+
+  {{if .Unmapped}}
+  <div class="off-track">
+    <h3>Unmapped epics &mdash; work serving no declared goal</h3>
+    <ul>
+      {{range .Unmapped}}<li><strong>{{.Key}}</strong> {{.Summary}}</li>{{end}}
     </ul>
   </div>
   {{end}}
 
   <table>
-    <thead><tr><th>Epic</th><th>Type</th><th>Alignment</th><th>Status</th><th>Progress</th></tr></thead>
+    <thead><tr><th>Epic</th><th>Criterion</th><th>Advances</th><th>Status</th><th>Progress</th></tr></thead>
     <tbody>
       {{range .Epics}}
       <tr>
         <td><strong>{{.Key}}</strong> {{.Summary}}</td>
-        <td><span class="tag">{{.WorkType}}</span></td>
-        <td>{{if .Alignment}}{{.Alignment}}{{else}}&mdash;{{end}}</td>
+        <td>{{if .Criterion}}<span class="tag">{{.Criterion}}</span>{{else}}&mdash;{{end}}</td>
+        <td>{{if eq .Advances "advances"}}<span class="st-done">yes</span>{{else if eq .Advances "stalled"}}<span class="st-blocked">no</span>{{else}}&mdash;{{end}}</td>
         <td class="status-{{.Status}}">{{.Status}}</td>
         <td>{{.Progress}}%</td>
       </tr>

@@ -8,3 +8,6 @@
 *.db
 *.db-shm
 *.db-wal
+
+# Generated dashboard
+/dashboard.html

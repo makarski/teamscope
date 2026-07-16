@@ -33,12 +33,15 @@ func (sm *SlackMessenger) Post(view TeamView) error {
 func buildBlocks(view TeamView) []slack.Block {
 	blocks := []slack.Block{
 		headerBlock(view),
-		contextBlock(fmt.Sprintf("%s · %d epics", view.TakenAt, view.EpicCount)),
-		section(mixLine(view.Mix)),
-		section(alignmentLine(view.Alignment)),
+		contextBlock(fmt.Sprintf("rubric: %s · %s · %d epics", view.Rubric, view.TakenAt, view.EpicCount)),
+		section(focusLine(view)),
+		section(coverageLine(view.Coverage)),
 	}
-	if attention := attentionSection(view.OffTrack); attention != nil {
-		blocks = append(blocks, slack.NewDividerBlock(), attention)
+	if drift := driftSection(view.Drift); drift != nil {
+		blocks = append(blocks, slack.NewDividerBlock(), drift)
+	}
+	if unmapped := unmappedSection(view.Unmapped); unmapped != nil {
+		blocks = append(blocks, unmapped)
 	}
 	return blocks
 }
@@ -56,48 +59,60 @@ func section(markdown string) slack.Block {
 	return slack.NewSectionBlock(slack.NewTextBlockObject(slack.MarkdownType, markdown, false, false), nil, nil)
 }
 
-func mixLine(mix []MixSlice) string {
-	parts := make([]string, 0, len(mix))
-	for _, s := range mix {
-		parts = append(parts, fmt.Sprintf("%s %s *%d%%*", workTypeEmoji(s.WorkType), s.WorkType, s.Percent))
+func focusLine(view TeamView) string {
+	drift := "no drift"
+	if len(view.Drift) > 0 {
+		drift = fmt.Sprintf(":red_circle: %d uncovered goals", len(view.Drift))
 	}
-	return "*Work mix*\n" + strings.Join(parts, "   ")
-}
-
-func alignmentLine(a AlignmentBreakdown) string {
 	return fmt.Sprintf(
-		"*Alignment*\n:white_check_mark: aligned *%d*   :large_yellow_circle: partial *%d*   :red_circle: off-track *%d*   :grey_question: unscored *%d*",
-		a.Aligned, a.Partial, a.OffTrack, a.Unknown,
+		"*Focus*\n:dart: blocker focus *%d%%*   %s   :grey_question: unmapped *%d*",
+		view.BlockerFocus, drift, len(view.Unmapped),
 	)
 }
 
-func attentionSection(offTrack []EpicView) slack.Block {
-	if len(offTrack) == 0 {
+func coverageLine(coverage []CriterionCoverage) string {
+	if len(coverage) == 0 {
+		return "*Coverage*\n_No rubric criteria resolved._"
+	}
+	lines := []string{"*Coverage*"}
+	for _, c := range coverage {
+		lines = append(lines, fmt.Sprintf(
+			"%s *%s* %s — advancing %d/%d (%d%%)",
+			statusEmoji(c.Status), c.Key, c.Title, c.Advancing, c.Total, c.Share,
+		))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func driftSection(drift []CriterionCoverage) slack.Block {
+	if len(drift) == 0 {
 		return nil
 	}
-	lines := []string{"*Needs attention* :warning:"}
-	for _, e := range offTrack {
-		lines = append(lines, fmt.Sprintf("• *%s* %s — %s", e.Key, e.Summary, attentionReason(e)))
+	lines := []string{"*Drift — open goals nobody is advancing* :warning:"}
+	for _, c := range drift {
+		lines = append(lines, fmt.Sprintf("• *%s* %s", c.Key, c.Title))
 	}
 	return section(strings.Join(lines, "\n"))
 }
 
-func attentionReason(e EpicView) string {
-	if e.AlignNote != "" {
-		return e.AlignNote
+func unmappedSection(unmapped []EpicView) slack.Block {
+	if len(unmapped) == 0 {
+		return nil
 	}
-	return string(e.Status)
+	lines := []string{"*Unmapped epics — work serving no declared goal*"}
+	for _, e := range unmapped {
+		lines = append(lines, fmt.Sprintf("• *%s* %s", e.Key, e.Summary))
+	}
+	return section(strings.Join(lines, "\n"))
 }
 
-func workTypeEmoji(wt domain.WorkType) string {
-	switch wt {
-	case domain.WorkBusiness:
-		return ":moneybag:"
-	case domain.WorkChore:
-		return ":broom:"
-	case domain.WorkRnD:
-		return ":microscope:"
+func statusEmoji(status domain.Status) string {
+	switch status {
+	case domain.CriterionDone:
+		return ":white_check_mark:"
+	case domain.CriterionOpen:
+		return ":large_yellow_circle:"
 	default:
-		return ":memo:"
+		return ":grey_question:"
 	}
 }
