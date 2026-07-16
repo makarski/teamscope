@@ -61,11 +61,16 @@ func NewJiraClient(cfg *config.Jira) (*JiraClient, error) {
 	return &JiraClient{client: c, startDateField: cfg.StartDateField}, nil
 }
 
-// FetchEpics returns all epics (with child issues) for a project that started
-// this year, mirroring roadsnap's roadmap query.
+// FetchEpics returns all epics (with child issues) for a project that are in
+// active scope this year: started this year, updated this year, or with no
+// start date set. The permissive filter keeps roadsnap's "current work" intent
+// while no longer silently dropping epics that simply lack a start date.
 func (jc *JiraClient) FetchEpics(project string) ([]RawEpic, error) {
 	jql := fmt.Sprintf(
-		`project = "%s" AND issuetype = Epic AND "Start date[Date]" > startOfYear()`,
+		`project = "%s" AND issuetype = Epic AND (`+
+			`"Start date[Date]" > startOfYear() OR `+
+			`updated > startOfYear() OR `+
+			`"Start date[Date]" IS EMPTY)`,
 		project,
 	)
 	raw, err := jc.search(jql)
