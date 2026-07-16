@@ -57,42 +57,75 @@ type LabelledEpic struct {
 	Done    bool
 }
 
-// JiraLabelSource turns every epic carrying a configured label into a
-// criterion: the epic key is the criterion key, its summary the title, and its
-// Jira done-state the criterion status. This automates readiness-style rubrics
-// straight from Jira with no AI.
-type JiraLabelSource struct {
-	fetcher LabelFetcher
-	project string
-	label   string
-	name    string
-	lens    domain.Lens
+// NewJiraLabelSource wires a label source for one project under binding b
+// (which names the rubric and sets the shared lens).
+func NewJiraLabelSource(fetcher LabelFetcher, project, label string, b Binding) Source {
+	return newDynamicSource(b, func() ([]goalItem, error) {
+		epics, err := fetcher.FetchByLabel(project, label)
+		if err != nil {
+			return nil, fmt.Errorf("goals: fetch label %q in %s: %w", label, project, err)
+		}
+		return labelledItems(epics), nil
+	})
 }
 
-// NewJiraLabelSource wires a label source for one project. name labels the
-// resulting rubric; lens (optional) is applied to every criterion.
-func NewJiraLabelSource(fetcher LabelFetcher, project, label, name string, lens domain.Lens) *JiraLabelSource {
-	return &JiraLabelSource{fetcher: fetcher, project: project, label: label, name: name, lens: lens}
+func labelledItems(epics []LabelledEpic) []goalItem {
+	items := make([]goalItem, 0, len(epics))
+	for _, e := range epics {
+		items = append(items, goalItem{Key: e.Key, Title: e.Summary, Done: e.Done})
+	}
+	return items
 }
 
-// Rubric queries the label and maps each epic to a criterion.
-func (s *JiraLabelSource) Rubric(_ context.Context, _ string) (domain.Rubric, error) {
-	epics, err := s.fetcher.FetchByLabel(s.project, s.label)
+// Binding names the rubric a dynamic source produces and sets the lens applied
+// to every criterion. Grouping these avoids threading them as loose arguments.
+type Binding struct {
+	Name string
+	Lens domain.Lens
+}
+
+// goalItem is one unit a dynamic source yields: it becomes a single criterion.
+type goalItem struct {
+	Key   string
+	Title string
+	Done  bool
+}
+
+// dynamicSource resolves a rubric by fetching goal items and mapping each onto
+// a criterion. It unifies every non-static source (Jira label, Confluence
+// readiness, and future ones): each supplies only how to fetch its items, and
+// the shared criterion shape lives here in one place.
+type dynamicSource struct {
+	binding Binding
+	items   func() ([]goalItem, error)
+}
+
+// newDynamicSource builds a source from a binding and an item fetcher. It is the
+// single construction path every dynamic source (label, Confluence) funnels
+// through, so the wiring lives in one place.
+func newDynamicSource(b Binding, items func() ([]goalItem, error)) Source {
+	return &dynamicSource{binding: b, items: items}
+}
+
+// Rubric fetches the source's goal items and maps each to a criterion, applying
+// the shared shape: status from done-state, default weight, and shared lens.
+func (s *dynamicSource) Rubric(_ context.Context, _ string) (domain.Rubric, error) {
+	items, err := s.items()
 	if err != nil {
-		return domain.Rubric{}, fmt.Errorf("goals: fetch label %q in %s: %w", s.label, s.project, err)
+		return domain.Rubric{}, err
 	}
 
-	criteria := make([]domain.Criterion, 0, len(epics))
-	for _, e := range epics {
+	criteria := make([]domain.Criterion, 0, len(items))
+	for _, it := range items {
 		criteria = append(criteria, domain.Criterion{
-			Key:    e.Key,
-			Title:  e.Summary,
-			Status: statusOf(e.Done),
+			Key:    it.Key,
+			Title:  it.Title,
+			Status: statusOf(it.Done),
 			Weight: defaultWeight,
-			Lens:   s.lens,
+			Lens:   s.binding.Lens,
 		})
 	}
-	return domain.Rubric{Name: s.name, Criteria: criteria}, nil
+	return domain.Rubric{Name: s.binding.Name, Criteria: criteria}, nil
 }
 
 func statusOf(done bool) domain.Status {
@@ -100,4 +133,40 @@ func statusOf(done bool) domain.Status {
 		return domain.CriterionDone
 	}
 	return domain.CriterionOpen
+}
+
+// Pillar is the minimal projection of a readiness page's pillar the
+// Confluence source needs to synthesize a criterion.
+type Pillar struct {
+	Key   string
+	Title string
+	Done  bool
+}
+
+// PageFetcher parses a readiness Confluence page into its pillars.
+type PageFetcher interface {
+	FetchReadinessPillars(pageID string) ([]Pillar, error)
+}
+
+// NewConfluenceSource turns each pillar of a product-readiness page into a
+// criterion: the pillar becomes the criterion, its RAG state the criterion
+// status. This drives readiness-style rubrics straight from the page the team
+// already maintains, with no AI. name labels the resulting rubric; lens
+// (optional) is applied to every criterion.
+func NewConfluenceSource(fetcher PageFetcher, pageID string, b Binding) Source {
+	return newDynamicSource(b, func() ([]goalItem, error) {
+		pillars, err := fetcher.FetchReadinessPillars(pageID)
+		if err != nil {
+			return nil, fmt.Errorf("goals: fetch readiness page %s: %w", pageID, err)
+		}
+		return pillarItems(pillars), nil
+	})
+}
+
+func pillarItems(pillars []Pillar) []goalItem {
+	items := make([]goalItem, 0, len(pillars))
+	for _, p := range pillars {
+		items = append(items, goalItem{Key: p.Key, Title: p.Title, Done: p.Done})
+	}
+	return items
 }

@@ -71,12 +71,15 @@ type (
 	//   source = "static"      criteria are listed inline below
 	//   source = "jira_label"  criteria are the epics carrying Label in
 	//                          LabelProject (one criterion per epic)
+	//   source = "confluence"  criteria are the pillars parsed from the
+	//                          readiness page identified by PageID
 	Rubric struct {
 		Name         string        `toml:"name"`
 		Source       string        `toml:"source"`
 		Lens         string        `toml:"lens"`
 		Label        string        `toml:"label"`
 		LabelProject string        `toml:"label_project"`
+		PageID       string        `toml:"page_id"`
 		Criteria     []Criterion   `toml:"criteria"`
 		KeywordHints []KeywordHint `toml:"keyword_hints"`
 	}
@@ -213,7 +216,7 @@ func (c *Config) RubricByName(name string) (Rubric, bool) {
 func (c *Config) GoalsHash() string {
 	var b strings.Builder
 	for _, r := range c.Rubrics {
-		fmt.Fprintf(&b, "%s|%s|%s|%s|%s;", r.Name, r.Source, r.Label, r.LabelProject, r.Lens)
+		fmt.Fprintf(&b, "%s|%s|%s|%s|%s|%s;", r.Name, r.Source, r.Label, r.LabelProject, r.PageID, r.Lens)
 		for _, cr := range r.Criteria {
 			fmt.Fprintf(&b, "%s=%s:%s:%g:%s,", cr.Key, cr.Title, cr.Status, cr.Weight, cr.Lens)
 		}
