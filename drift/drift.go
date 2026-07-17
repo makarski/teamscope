@@ -52,11 +52,6 @@ func Compute(ctx context.Context, fetcher TicketFetcher, rubric domain.Rubric, t
 		return nil, fmt.Errorf("drift: fetch tickets: %w", err)
 	}
 
-	ticketByKey := map[string]domain.TicketLink{}
-	for _, t := range tickets {
-		ticketByKey[t.Key] = t
-	}
-
 	// Map each ticket to the criterion it belongs to. A ticket belongs to a
 	// criterion if the criterion's key appears near the ticket key in the text.
 	// For simplicity in this first pass, we attribute all linked tickets to

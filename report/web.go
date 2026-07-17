@@ -84,7 +84,7 @@ const dashboardTemplate = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Teamscope</title>
 <style>` + dashboardCSS + `</style>
-<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
 </head>
 <body>
 <div class="container">
@@ -99,7 +99,7 @@ const dashboardTemplate = `<!DOCTYPE html>
 
 {{range .Teams}}
   <section class="team" x-data="{ open: true }">
-    <div class="team-head" @click="open = !open">
+    <div class="team-head" role="button" tabindex="0" :aria-expanded="open" @click="open = !open" @keydown.enter="open = !open" @keydown.space.prevent="open = !open">
       <h2>{{.Team}}</h2>
       <div class="badges">
         <span class="badge badge-blue">{{.EpicCount}} epics</span>
@@ -136,7 +136,7 @@ const dashboardTemplate = `<!DOCTYPE html>
           </div>
           {{if .Tickets}}
           <div class="pillar-tickets">
-            {{range .Tickets}}<a href="{{$.JiraBaseURL}}/browse/{{.Key}}">{{.Key}}</a> {{end}}
+            {{range .Tickets}}{{if $.JiraBaseURL}}<a href="{{$.JiraBaseURL}}/browse/{{.Key}}">{{.Key}}</a> {{else}}{{.Key}} {{end}}{{end}}
           </div>
           {{end}}
         </div>
@@ -165,7 +165,7 @@ const dashboardTemplate = `<!DOCTYPE html>
         <tbody>
           {{range .Epics}}
           <tr>
-            <td class="epic-key"><a href="{{$.JiraBaseURL}}/browse/{{.Key}}">{{.Key}}</a> {{.Summary}}</td>
+            <td class="epic-key">{{if $.JiraBaseURL}}<a href="{{$.JiraBaseURL}}/browse/{{.Key}}">{{.Key}}</a>{{else}}{{.Key}}{{end}} {{.Summary}}</td>
             <td>{{if .Criterion}}<span class="badge badge-dim">{{.Criterion}}</span>{{else}}&mdash;{{end}}</td>
             <td>{{if eq .Advances "advances"}}<span class="st-done">yes</span>{{else if eq .Advances "stalled"}}<span class="st-overdue">no</span>{{else}}&mdash;{{end}}</td>
             <td class="st-{{.Status}}">{{.Status}}</td>

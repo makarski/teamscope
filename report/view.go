@@ -24,7 +24,6 @@ type TeamView struct {
 	BlockerFocus int // % of active epics working an open criterion
 	States       []PillarStateView
 	Narrative    string
-	JiraBaseURL  string
 }
 
 // PillarStateView is the display model for a criterion's drift state.
@@ -42,7 +41,6 @@ type PillarStateView struct {
 type TicketView struct {
 	Key    string
 	Status domain.ProgressStatus
-	URL    string
 }
 
 // CriterionCoverage reports how much active work advances one criterion.

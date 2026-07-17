@@ -433,8 +433,12 @@ func scanEpic(rows *sql.Rows) (domain.ClassifiedEpic, error) {
 
 func (s *Store) loadStates(ctx context.Context, snapID int64, criteria []domain.Criterion) ([]domain.CriterionState, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, criterion_key, done_count, open_count, drift
-		 FROM criterion_states WHERE snapshot_id = ? ORDER BY id`, snapID)
+		`SELECT cs.id, cs.criterion_key, cs.done_count, cs.open_count, cs.drift,
+		        tl.ticket_key, tl.ticket_status
+		 FROM criterion_states cs
+		 LEFT JOIN ticket_links tl ON tl.state_id = cs.id
+		 WHERE cs.snapshot_id = ?
+		 ORDER BY cs.id, tl.id`, snapID)
 	if err != nil {
 		return nil, fmt.Errorf("store: query states: %w", err)
 	}
@@ -446,47 +450,53 @@ func (s *Store) loadStates(ctx context.Context, snapID int64, criteria []domain.
 	}
 
 	var out []domain.CriterionState
+	stateByID := map[int64]*domain.CriterionState{}
 	for rows.Next() {
-		var (
-			stateID        int64
-			critKey, drift string
-			state          domain.CriterionState
-		)
-		if err := rows.Scan(&stateID, &critKey, &state.DoneCount, &state.OpenCount, &drift); err != nil {
-			return nil, fmt.Errorf("store: scan state: %w", err)
-		}
-		state.Criterion = critByKey[critKey]
-		state.Drift = domain.Drift(drift)
-
-		tickets, err := s.loadTickets(ctx, stateID)
-		if err != nil {
+		if err := scanStateRow(rows, critByKey, &out, stateByID); err != nil {
 			return nil, err
 		}
-		state.LinkedKeys = tickets
-		out = append(out, state)
 	}
 	return out, rows.Err()
 }
 
-func (s *Store) loadTickets(ctx context.Context, stateID int64) ([]domain.TicketLink, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT ticket_key, ticket_status FROM ticket_links WHERE state_id = ? ORDER BY id`, stateID)
-	if err != nil {
-		return nil, fmt.Errorf("store: query tickets: %w", err)
+func scanStateRow(rows *sql.Rows, critByKey map[string]domain.Criterion, out *[]domain.CriterionState, stateByID map[int64]*domain.CriterionState) error {
+	var (
+		stateID    int64
+		critKey    string
+		drift      string
+		ticketKey  sql.NullString
+		ticketStat sql.NullString
+	)
+	if err := rows.Scan(&stateID, &critKey, new(int), new(int), &drift, &ticketKey, &ticketStat); err != nil {
+		return fmt.Errorf("store: scan state: %w", err)
 	}
-	defer rows.Close()
 
-	var out []domain.TicketLink
-	for rows.Next() {
-		var (
-			t  domain.TicketLink
-			st string
-		)
-		if err := rows.Scan(&t.Key, &st); err != nil {
-			return nil, fmt.Errorf("store: scan ticket: %w", err)
+	existing, ok := stateByID[stateID]
+	if !ok {
+		crit, found := critByKey[critKey]
+		if !found {
+			return nil
 		}
-		t.Status = domain.ProgressStatus(st)
-		out = append(out, t)
+		*out = append(*out, domain.CriterionState{
+			Criterion: crit,
+			Drift:     domain.Drift(drift),
+		})
+		existing = &(*out)[len(*out)-1]
+		stateByID[stateID] = existing
 	}
-	return out, rows.Err()
+
+	if !ticketKey.Valid {
+		return nil
+	}
+	status := domain.ProgressStatus(ticketStat.String)
+	existing.LinkedKeys = append(existing.LinkedKeys, domain.TicketLink{
+		Key:    ticketKey.String,
+		Status: status,
+	})
+	if status == domain.StatusDone {
+		existing.DoneCount++
+	} else {
+		existing.OpenCount++
+	}
+	return nil
 }
