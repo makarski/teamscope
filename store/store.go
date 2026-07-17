@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS snapshots (
 	team          TEXT    NOT NULL,
 	rubric        TEXT    NOT NULL,
 	taken_at      TEXT    NOT NULL,
-	goals_hash    TEXT    NOT NULL
+	goals_hash    TEXT    NOT NULL,
+	narrative     TEXT    NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_snapshots_team_taken
@@ -67,6 +68,28 @@ CREATE TABLE IF NOT EXISTS epics (
 
 CREATE INDEX IF NOT EXISTS idx_epics_snapshot
 	ON epics(snapshot_id);
+
+CREATE TABLE IF NOT EXISTS criterion_states (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	snapshot_id   INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
+	criterion_key TEXT    NOT NULL,
+	done_count    INTEGER NOT NULL,
+	open_count    INTEGER NOT NULL,
+	drift         TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_criterion_states_snapshot
+	ON criterion_states(snapshot_id);
+
+CREATE TABLE IF NOT EXISTS ticket_links (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	state_id      INTEGER NOT NULL REFERENCES criterion_states(id) ON DELETE CASCADE,
+	ticket_key    TEXT    NOT NULL,
+	ticket_status TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ticket_links_state
+	ON ticket_links(state_id);
 `
 
 // Open opens (creating if needed) the SQLite database at path and applies migrations.
@@ -114,6 +137,9 @@ func (s *Store) Save(ctx context.Context, snap domain.Snapshot) (int64, error) {
 	if err := insertEpics(ctx, tx, snapID, snap.Epics); err != nil {
 		return 0, err
 	}
+	if err := insertStates(ctx, tx, snapID, snap.States); err != nil {
+		return 0, err
+	}
 
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("store: commit: %w", err)
@@ -123,10 +149,10 @@ func (s *Store) Save(ctx context.Context, snap domain.Snapshot) (int64, error) {
 
 func insertSnapshot(ctx context.Context, tx *sql.Tx, snap domain.Snapshot) (int64, error) {
 	res, err := tx.ExecContext(ctx,
-		`INSERT INTO snapshots (team, rubric, taken_at, goals_hash)
-		 VALUES (?, ?, ?, ?)`,
+		`INSERT INTO snapshots (team, rubric, taken_at, goals_hash, narrative)
+		 VALUES (?, ?, ?, ?, ?)`,
 		snap.Team, snap.Rubric.Name,
-		snap.TakenAt.UTC().Format(timeLayout), snap.GoalsHash,
+		snap.TakenAt.UTC().Format(timeLayout), snap.GoalsHash, snap.Narrative,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("store: insert snapshot: %w", err)
@@ -195,10 +221,61 @@ func insertEpics(ctx context.Context, tx *sql.Tx, snapID int64, epics []domain.C
 	return nil
 }
 
+func insertStates(ctx context.Context, tx *sql.Tx, snapID int64, states []domain.CriterionState) error {
+	stateStmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO criterion_states (snapshot_id, criterion_key, done_count, open_count, drift)
+		 VALUES (?, ?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("store: prepare state insert: %w", err)
+	}
+	defer stateStmt.Close()
+
+	ticketStmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO ticket_links (state_id, ticket_key, ticket_status) VALUES (?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("store: prepare ticket insert: %w", err)
+	}
+	defer ticketStmt.Close()
+
+	for _, s := range states {
+		stateID, err := insertOneState(ctx, stateStmt, snapID, s)
+		if err != nil {
+			return err
+		}
+		if err := insertTickets(ctx, ticketStmt, stateID, s.LinkedKeys); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func insertOneState(ctx context.Context, stmt *sql.Stmt, snapID int64, s domain.CriterionState) (int64, error) {
+	res, err := stmt.ExecContext(ctx,
+		snapID, s.Criterion.Key, s.DoneCount, s.OpenCount, string(s.Drift),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("store: insert state %q: %w", s.Criterion.Key, err)
+	}
+	stateID, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("store: state id: %w", err)
+	}
+	return stateID, nil
+}
+
+func insertTickets(ctx context.Context, stmt *sql.Stmt, stateID int64, tickets []domain.TicketLink) error {
+	for _, t := range tickets {
+		if _, err := stmt.ExecContext(ctx, stateID, t.Key, string(t.Status)); err != nil {
+			return fmt.Errorf("store: insert ticket %s: %w", t.Key, err)
+		}
+	}
+	return nil
+}
+
 // Latest returns the most recent snapshot for a team, or sql.ErrNoRows if none exist.
 func (s *Store) Latest(ctx context.Context, team string) (domain.Snapshot, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, team, rubric, taken_at, goals_hash
+		`SELECT id, team, rubric, taken_at, goals_hash, narrative
 		 FROM snapshots WHERE team = ? ORDER BY taken_at DESC LIMIT 1`, team)
 
 	snap, err := scanSnapshotMeta(row)
@@ -217,6 +294,12 @@ func (s *Store) Latest(ctx context.Context, team string) (domain.Snapshot, error
 		return domain.Snapshot{}, err
 	}
 	snap.Rubric.Criteria = criteria
+
+	states, err := s.loadStates(ctx, snap.ID, criteria)
+	if err != nil {
+		return domain.Snapshot{}, err
+	}
+	snap.States = states
 	return snap, nil
 }
 
@@ -224,7 +307,7 @@ func (s *Store) Latest(ctx context.Context, team string) (domain.Snapshot, error
 // Epics are not hydrated; use Latest for full detail.
 func (s *Store) Trend(ctx context.Context, team string, n int) ([]domain.Snapshot, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, team, rubric, taken_at, goals_hash
+		`SELECT id, team, rubric, taken_at, goals_hash, narrative
 		 FROM snapshots WHERE team = ? ORDER BY taken_at DESC LIMIT ?`, team, n)
 	if err != nil {
 		return nil, fmt.Errorf("store: query trend: %w", err)
@@ -273,7 +356,7 @@ func scanSnapshotMeta(sc scanner) (domain.Snapshot, error) {
 		snap    domain.Snapshot
 		takenAt string
 	)
-	if err := sc.Scan(&snap.ID, &snap.Team, &snap.Rubric.Name, &takenAt, &snap.GoalsHash); err != nil {
+	if err := sc.Scan(&snap.ID, &snap.Team, &snap.Rubric.Name, &takenAt, &snap.GoalsHash, &snap.Narrative); err != nil {
 		return domain.Snapshot{}, err
 	}
 	t, err := time.Parse(timeLayout, takenAt)
@@ -346,4 +429,64 @@ func scanEpic(rows *sql.Rows) (domain.ClassifiedEpic, error) {
 	e.Lens = domain.Lens(lens)
 	e.Status = domain.ProgressStatus(st)
 	return e, nil
+}
+
+func (s *Store) loadStates(ctx context.Context, snapID int64, criteria []domain.Criterion) ([]domain.CriterionState, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, criterion_key, done_count, open_count, drift
+		 FROM criterion_states WHERE snapshot_id = ? ORDER BY id`, snapID)
+	if err != nil {
+		return nil, fmt.Errorf("store: query states: %w", err)
+	}
+	defer rows.Close()
+
+	critByKey := map[string]domain.Criterion{}
+	for _, c := range criteria {
+		critByKey[c.Key] = c
+	}
+
+	var out []domain.CriterionState
+	for rows.Next() {
+		var (
+			stateID        int64
+			critKey, drift string
+			state          domain.CriterionState
+		)
+		if err := rows.Scan(&stateID, &critKey, &state.DoneCount, &state.OpenCount, &drift); err != nil {
+			return nil, fmt.Errorf("store: scan state: %w", err)
+		}
+		state.Criterion = critByKey[critKey]
+		state.Drift = domain.Drift(drift)
+
+		tickets, err := s.loadTickets(ctx, stateID)
+		if err != nil {
+			return nil, err
+		}
+		state.LinkedKeys = tickets
+		out = append(out, state)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) loadTickets(ctx context.Context, stateID int64) ([]domain.TicketLink, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT ticket_key, ticket_status FROM ticket_links WHERE state_id = ? ORDER BY id`, stateID)
+	if err != nil {
+		return nil, fmt.Errorf("store: query tickets: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.TicketLink
+	for rows.Next() {
+		var (
+			t  domain.TicketLink
+			st string
+		)
+		if err := rows.Scan(&t.Key, &st); err != nil {
+			return nil, fmt.Errorf("store: scan ticket: %w", err)
+		}
+		t.Status = domain.ProgressStatus(st)
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }

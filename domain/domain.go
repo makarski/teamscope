@@ -119,6 +119,33 @@ type ClassifiedEpic struct {
 	Activity  Activity       `json:"activity"`
 }
 
+// TicketLink is a Jira issue referenced by a readiness pillar, with its live
+// status fetched so drift can be computed.
+type TicketLink struct {
+	Key    string         `json:"key"`
+	Status ProgressStatus `json:"status"`
+}
+
+// Drift is the verdict when a pillar's hand-set RAG is reconciled against the
+// live status of its referenced tickets.
+type Drift string
+
+const (
+	DriftNone       Drift = ""           // page and tickets agree
+	DriftOptimistic Drift = "optimistic" // page says done, tickets still open
+	DriftStale      Drift = "stale"      // page says gap, tickets actually done
+)
+
+// CriterionState is the per-pillar drift verdict with the live ticket evidence
+// it was computed from.
+type CriterionState struct {
+	Criterion  Criterion    `json:"criterion"`
+	LinkedKeys []TicketLink `json:"linked_keys"`
+	DoneCount  int          `json:"done_count"`
+	OpenCount  int          `json:"open_count"`
+	Drift      Drift        `json:"drift"`
+}
+
 // Snapshot is the point-in-time state for one team, measured against a rubric.
 type Snapshot struct {
 	ID        int64            `json:"id"`
@@ -127,6 +154,8 @@ type Snapshot struct {
 	TakenAt   time.Time        `json:"taken_at"`
 	GoalsHash string           `json:"goals_hash"`
 	Epics     []ClassifiedEpic `json:"epics"`
+	States    []CriterionState `json:"states"`
+	Narrative string           `json:"narrative"`
 }
 
 // Mix returns the share of epics mapped to each criterion key. Shares are

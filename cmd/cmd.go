@@ -6,11 +6,13 @@ import (
 	"fmt"
 
 	"github.com/makarski/teamscope/align"
+	"github.com/makarski/teamscope/anthropic"
 	"github.com/makarski/teamscope/classify"
 	"github.com/makarski/teamscope/config"
 	"github.com/makarski/teamscope/domain"
 	"github.com/makarski/teamscope/goals"
 	"github.com/makarski/teamscope/ingest"
+	"github.com/makarski/teamscope/narrate"
 	"github.com/makarski/teamscope/pipeline"
 	"github.com/makarski/teamscope/store"
 )
@@ -40,7 +42,7 @@ func (d *deps) close() error {
 	return d.store.Close()
 }
 
-// buildRunner assembles the ingest → rubric → classify → align → store pipeline.
+// buildRunner assembles the ingest → rubric → classify → align → drift → narrate → store pipeline.
 func (d *deps) buildRunner() (*pipeline.Runner, error) {
 	fetcher, err := ingest.NewJiraClient(d.cfg.Jira)
 	if err != nil {
@@ -52,14 +54,18 @@ func (d *deps) buildRunner() (*pipeline.Runner, error) {
 		return nil, err
 	}
 
+	aiClient := buildAIClient(d.cfg.Anthropic, d.cfg.Bedrock)
+
 	return pipeline.NewRunner(pipeline.Deps{
-		Fetcher:     fetcher,
-		Sources:     sources,
-		Factory:     d.buildFactory(),
-		Aligner:     alignerOrNil(align.NewScorer(d.cfg.Anthropic, d.cfg.Bedrock)),
-		Store:       d.store,
-		StatusNames: d.cfg.Jira.StatusNames,
-		GoalsHash:   d.cfg.GoalsHash(),
+		Fetcher:      fetcher,
+		Sources:      sources,
+		Factory:      d.buildFactory(),
+		Aligner:      alignerOrNil(align.NewScorer(d.cfg.Anthropic, d.cfg.Bedrock)),
+		Store:        d.store,
+		StatusNames:  d.cfg.Jira.StatusNames,
+		GoalsHash:    d.cfg.GoalsHash(),
+		DriftFetcher: fetcher,
+		Narrator:     narratorOrNil(aiClient),
 	}), nil
 }
 
@@ -196,6 +202,27 @@ func alignerOrNil(s *align.Scorer) pipeline.Aligner {
 		return nil
 	}
 	return s
+}
+
+// buildAIClient builds the shared Anthropic client for narrative generation.
+func buildAIClient(aiCfg *config.Anthropic, bedrockCfg *config.Bedrock) *anthropic.Client {
+	return anthropic.New(aiCfg, bedrockCfg)
+}
+
+// narratorOrNil wraps an AI client as a pipeline Narrator, or returns nil.
+func narratorOrNil(ai *anthropic.Client) pipeline.Narrator {
+	if ai == nil {
+		return nil
+	}
+	return narrateAdapter{ai: ai}
+}
+
+type narrateAdapter struct {
+	ai *anthropic.Client
+}
+
+func (n narrateAdapter) Brief(ctx context.Context, snap domain.Snapshot) (string, error) {
+	return narrate.Brief(ctx, n.ai, snap)
 }
 
 // Run dispatches a subcommand by name.

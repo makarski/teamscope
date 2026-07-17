@@ -10,6 +10,7 @@ import (
 	"github.com/andygrunwald/go-jira"
 
 	"github.com/makarski/teamscope/config"
+	"github.com/makarski/teamscope/domain"
 )
 
 // RawEpic is an epic together with its child issues and parsed planning dates,
@@ -102,6 +103,49 @@ func (jc *JiraClient) FetchEpics(project string) ([]RawEpic, error) {
 		epics = append(epics, re)
 	}
 	return epics, nil
+}
+
+// FetchByKeys returns the live status of the given Jira issue keys, regardless
+// of project. Used by the drift check to reconcile a readiness page's claims
+// against actual ticket status. Keys without a match are silently omitted.
+func (jc *JiraClient) FetchByKeys(keys []string) ([]domain.TicketLink, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	quoted := make([]string, len(keys))
+	for i, k := range keys {
+		quoted[i] = fmt.Sprintf("%q", k)
+	}
+	jql := "key IN (" + strings.Join(quoted, ", ") + ")"
+	raw, err := jc.search(jql)
+	if err != nil {
+		return nil, fmt.Errorf("ingest: fetch by keys: %w", err)
+	}
+
+	out := make([]domain.TicketLink, 0, len(raw))
+	for _, item := range raw {
+		out = append(out, domain.TicketLink{
+			Key:    item.issue.Key,
+			Status: ticketStatus(item.issue),
+		})
+	}
+	return out, nil
+}
+
+// ticketStatus derives a ProgressStatus from a jira.Issue's status name.
+func ticketStatus(issue jira.Issue) domain.ProgressStatus {
+	if issue.Fields.Status == nil {
+		return domain.StatusToDo
+	}
+	name := issue.Fields.Status.Name
+	switch {
+	case strings.EqualFold(name, "Done"), strings.EqualFold(name, "Closed"), strings.EqualFold(name, "Resolved"):
+		return domain.StatusDone
+	case strings.EqualFold(name, "In Progress"), strings.EqualFold(name, "In Review"):
+		return domain.StatusOngoing
+	default:
+		return domain.StatusToDo
+	}
 }
 
 // rawEpicFromItem builds a RawEpic (without child issues) from a search item.
