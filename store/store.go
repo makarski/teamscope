@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -69,6 +70,17 @@ CREATE TABLE IF NOT EXISTS epics (
 CREATE INDEX IF NOT EXISTS idx_epics_snapshot
 	ON epics(snapshot_id);
 
+CREATE TABLE IF NOT EXISTS epic_tickets (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	epic_id       INTEGER NOT NULL REFERENCES epics(id) ON DELETE CASCADE,
+	ticket_key    TEXT    NOT NULL,
+	summary       TEXT    NOT NULL,
+	status        TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_epic_tickets_epic
+	ON epic_tickets(epic_id);
+
 CREATE TABLE IF NOT EXISTS criterion_states (
 	id            INTEGER PRIMARY KEY AUTOINCREMENT,
 	snapshot_id   INTEGER NOT NULL REFERENCES snapshots(id) ON DELETE CASCADE,
@@ -107,7 +119,63 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("store: apply schema: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: migrate: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// migrate applies incremental schema changes for databases created before the
+// current schema. Each migration is idempotent: it checks whether the column
+// exists before altering.
+func migrate(db *sql.DB) error {
+	migrations := []struct {
+		table  string
+		column string
+		ddl    string
+	}{
+		{"ticket_links", "ticket_summary", `ALTER TABLE ticket_links ADD COLUMN ticket_summary TEXT NOT NULL DEFAULT ''`},
+		{"snapshots", "narrative", `ALTER TABLE snapshots ADD COLUMN narrative TEXT NOT NULL DEFAULT ''`},
+	}
+	for _, m := range migrations {
+		if err := addColumnIfMissing(db, m.table, m.column, m.ddl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func addColumnIfMissing(db *sql.DB, table, column, ddl string) error {
+	if columnExists(db, table, column) {
+		return nil
+	}
+	if _, err := db.Exec(ddl); err != nil {
+		return fmt.Errorf("migrate: add %s.%s: %w", table, column, err)
+	}
+	return nil
+}
+
+// columnExists reports whether a column exists on a table.
+func columnExists(db *sql.DB, table, column string) bool {
+	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
+	if err != nil {
+		return true // assume exists on error to avoid breaking on edge cases
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return true
+		}
+		if name == column {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) Close() error {
@@ -210,13 +278,37 @@ func insertEpics(ctx context.Context, tx *sql.Tx, snapID int64, epics []domain.C
 	}
 	defer stmt.Close()
 
+	ticketStmt, err := tx.PrepareContext(ctx,
+		`INSERT INTO epic_tickets (epic_id, ticket_key, summary, status) VALUES (?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("store: prepare ticket insert: %w", err)
+	}
+	defer ticketStmt.Close()
+
 	for _, e := range epics {
-		if _, err := stmt.ExecContext(ctx,
+		res, err := stmt.ExecContext(ctx,
 			snapID, e.Key, e.Summary, e.Criterion.Key, string(e.Criterion.Source),
 			string(e.Criterion.Advances), e.Criterion.Note, string(e.Lens),
 			e.Progress, string(e.Status), e.Activity.PullRequests, e.Activity.Commits,
-		); err != nil {
+		)
+		if err != nil {
 			return fmt.Errorf("store: insert epic %s: %w", e.Key, err)
+		}
+		epicID, err := res.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("store: epic id: %w", err)
+		}
+		if err := insertEpicTickets(ctx, ticketStmt, epicID, e.Tickets); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func insertEpicTickets(ctx context.Context, stmt *sql.Stmt, epicID int64, tickets []domain.EpicTicket) error {
+	for _, t := range tickets {
+		if _, err := stmt.ExecContext(ctx, epicID, t.Key, t.Summary, string(t.Status)); err != nil {
+			return fmt.Errorf("store: insert ticket %s: %w", t.Key, err)
 		}
 	}
 	return nil
@@ -395,7 +487,7 @@ func (s *Store) loadCriteria(ctx context.Context, snapID int64) ([]domain.Criter
 
 func (s *Store) loadEpics(ctx context.Context, snapID int64) ([]domain.ClassifiedEpic, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT key, summary, criterion_key, class_source, advances, align_note, lens, progress, status, gh_prs, gh_commits
+		`SELECT id, key, summary, criterion_key, class_source, advances, align_note, lens, progress, status, gh_prs, gh_commits
 		 FROM epics WHERE snapshot_id = ? ORDER BY id`, snapID)
 	if err != nil {
 		return nil, fmt.Errorf("store: query epics: %w", err)
@@ -403,23 +495,43 @@ func (s *Store) loadEpics(ctx context.Context, snapID int64) ([]domain.Classifie
 	defer rows.Close()
 
 	var out []domain.ClassifiedEpic
+	epicIDs := make([]int64, 0)
 	for rows.Next() {
-		e, err := scanEpic(rows)
+		var epicID int64
+		e, err := scanEpicWithID(rows, &epicID)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, e)
+		epicIDs = append(epicIDs, epicID)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(out) > 0 {
+		attachEpicTickets(ctx, s, out, epicIDs)
+	}
+	return out, nil
 }
 
-func scanEpic(rows *sql.Rows) (domain.ClassifiedEpic, error) {
+func attachEpicTickets(ctx context.Context, s *Store, out []domain.ClassifiedEpic, epicIDs []int64) {
+	tickets, err := s.loadAllEpicTickets(ctx, epicIDs)
+	if err != nil {
+		return
+	}
+	for i := range out {
+		out[i].Tickets = tickets[epicIDs[i]]
+	}
+}
+
+func scanEpicWithID(rows *sql.Rows, epicID *int64) (domain.ClassifiedEpic, error) {
 	var (
 		e                                domain.ClassifiedEpic
 		critKey, src, lens, st, advances string
 	)
 	if err := rows.Scan(
-		&e.Key, &e.Summary, &critKey, &src, &advances, &e.Criterion.Note,
+		epicID, &e.Key, &e.Summary, &critKey, &src, &advances, &e.Criterion.Note,
 		&lens, &e.Progress, &st, &e.Activity.PullRequests, &e.Activity.Commits,
 	); err != nil {
 		return domain.ClassifiedEpic{}, fmt.Errorf("store: scan epic: %w", err)
@@ -430,6 +542,42 @@ func scanEpic(rows *sql.Rows) (domain.ClassifiedEpic, error) {
 	e.Lens = domain.Lens(lens)
 	e.Status = domain.ProgressStatus(st)
 	return e, nil
+}
+
+func (s *Store) loadAllEpicTickets(ctx context.Context, epicIDs []int64) (map[int64][]domain.EpicTicket, error) {
+	if len(epicIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(epicIDs))
+	args := make([]any, len(epicIDs))
+	for i, id := range epicIDs {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := fmt.Sprintf(
+		`SELECT epic_id, ticket_key, summary, status FROM epic_tickets WHERE epic_id IN (%s) ORDER BY id`,
+		strings.Join(placeholders, ", "),
+	)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: query epic tickets: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[int64][]domain.EpicTicket)
+	for rows.Next() {
+		var (
+			epicID int64
+			t      domain.EpicTicket
+			st     string
+		)
+		if err := rows.Scan(&epicID, &t.Key, &t.Summary, &st); err != nil {
+			return nil, fmt.Errorf("store: scan epic ticket: %w", err)
+		}
+		t.Status = domain.ProgressStatus(st)
+		out[epicID] = append(out[epicID], t)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) loadStates(ctx context.Context, snapID int64, criteria []domain.Criterion) ([]domain.CriterionState, error) {

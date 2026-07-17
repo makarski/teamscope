@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/andygrunwald/go-jira"
 	"github.com/makarski/teamscope/config"
 	"github.com/makarski/teamscope/domain"
 	"github.com/makarski/teamscope/ingest"
@@ -172,7 +173,53 @@ func (r *Runner) enrich(ctx context.Context, epic *ingest.RawEpic, rc runContext
 		Lens:      lens,
 		Progress:  progress,
 		Status:    status,
+		Tickets:   epicTickets(epic, r.deps.StatusNames),
 	}
+}
+
+// epicTickets converts an epic's child issues into EpicTicket views, classified
+// into the configured status buckets.
+func epicTickets(epic *ingest.RawEpic, sn config.StatusNames) []domain.EpicTicket {
+	if len(epic.Issues) == 0 {
+		return nil
+	}
+	tickets := make([]domain.EpicTicket, 0, len(epic.Issues))
+	for _, issue := range epic.Issues {
+		tickets = append(tickets, domain.EpicTicket{
+			Key:     issue.Key,
+			Summary: issue.Fields.Summary,
+			Status:  ticketProgressStatus(issue.Fields.Status, sn),
+		})
+	}
+	return tickets
+}
+
+// ticketProgressStatus buckets a Jira issue status name into a ProgressStatus
+// using the configured status names.
+func ticketProgressStatus(status *jira.Status, sn config.StatusNames) domain.ProgressStatus {
+	if status == nil {
+		return domain.StatusToDo
+	}
+	name := status.Name
+	if contains(sn.Done, name) {
+		return domain.StatusDone
+	}
+	if contains(sn.InProgress, name) {
+		return domain.StatusOngoing
+	}
+	if contains(sn.ToDo, name) {
+		return domain.StatusToDo
+	}
+	return domain.StatusToDo
+}
+
+func contains(s []string, v string) bool {
+	for _, item := range s {
+		if item == v {
+			return true
+		}
+	}
+	return false
 }
 
 // scoreAdvancement returns whether the epic advances its criterion, defaulting

@@ -37,10 +37,12 @@ type PillarStateView struct {
 	Tickets   []TicketView
 }
 
-// TicketView is a linked Jira ticket with its live status.
+// TicketView is a Jira ticket with its live status. Used for both pillar
+// drift tickets and epic child tickets.
 type TicketView struct {
-	Key    string
-	Status domain.ProgressStatus
+	Key     string
+	Summary string
+	Status  domain.ProgressStatus
 }
 
 // CriterionCoverage reports how much active work advances one criterion.
@@ -70,7 +72,10 @@ type EpicView struct {
 	Lens      domain.Lens
 	Status    domain.ProgressStatus
 	Progress  int // completion percentage
+	Tickets   []TicketView
 }
+
+// TicketView is a child ticket of an epic — see TicketView above.
 
 const timeDisplayLayout = "2006-01-02 15:04 MST"
 
@@ -209,11 +214,27 @@ func epicViews(epics []domain.ClassifiedEpic) []EpicView {
 			Lens:      e.Lens,
 			Status:    e.Status,
 			Progress:  int(math.Round(e.Progress * 100)),
+			Tickets:   ticketViews(e.Tickets),
 		})
 	}
 	sort.SliceStable(views, func(i, j int) bool {
 		return views[i].Key < views[j].Key
 	})
+	return views
+}
+
+func ticketViews(tickets []domain.EpicTicket) []TicketView {
+	if len(tickets) == 0 {
+		return nil
+	}
+	views := make([]TicketView, 0, len(tickets))
+	for _, t := range tickets {
+		views = append(views, TicketView{
+			Key:     t.Key,
+			Summary: t.Summary,
+			Status:  t.Status,
+		})
+	}
 	return views
 }
 

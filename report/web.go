@@ -163,14 +163,35 @@ const dashboardTemplate = `<!DOCTYPE html>
       <table>
         <thead><tr><th>Epic</th><th>Criterion</th><th>Advances</th><th>Status</th><th>Progress</th></tr></thead>
         <tbody>
-          {{range .Epics}}
-          <tr>
-            <td class="epic-key">{{if $.JiraBaseURL}}<a href="{{$.JiraBaseURL}}/browse/{{.Key}}">{{.Key}}</a>{{else}}{{.Key}}{{end}} {{.Summary}}</td>
-            <td>{{if .Criterion}}<span class="badge badge-dim">{{.Criterion}}</span>{{else}}&mdash;{{end}}</td>
-            <td>{{if eq .Advances "advances"}}<span class="st-done">yes</span>{{else if eq .Advances "stalled"}}<span class="st-overdue">no</span>{{else}}&mdash;{{end}}</td>
-            <td class="st-{{.Status}}">{{.Status}}</td>
-            <td><span class="progress-bar"><span class="progress-fill" style="width: {{.Progress}}%"></span></span> {{.Progress}}%</td>
+          {{range $i, $e := .Epics}}
+          <tr x-data="{ tickets: false }">
+            <td class="epic-key">
+              {{if $.JiraBaseURL}}<a href="{{$.JiraBaseURL}}/browse/{{$e.Key}}">{{$e.Key}}</a>{{else}}{{$e.Key}}{{end}} {{$e.Summary}}
+              {{if $e.Tickets}}<span class="badge badge-dim" style="cursor:pointer" @click="tickets = !tickets">{{len $e.Tickets}} tickets</span>{{end}}
+            </td>
+            <td>{{if $e.Criterion}}<span class="badge badge-dim">{{$e.Criterion}}</span>{{else}}&mdash;{{end}}</td>
+            <td>{{if eq $e.Advances "advances"}}<span class="st-done">yes</span>{{else if eq $e.Advances "stalled"}}<span class="st-overdue">no</span>{{else}}&mdash;{{end}}</td>
+            <td class="st-{{$e.Status}}">{{$e.Status}}</td>
+            <td><span class="progress-bar"><span class="progress-fill" style="width: {{$e.Progress}}%"></span></span> {{$e.Progress}}%</td>
           </tr>
+          {{if $e.Tickets}}
+          <template x-if="tickets">
+            <tr>
+              <td colspan="5" style="padding:0">
+                <table style="margin:0">
+                  <tbody>
+                    {{range $e.Tickets}}
+                    <tr>
+                      <td class="epic-key" style="padding-left:2rem">{{if $.JiraBaseURL}}<a href="{{$.JiraBaseURL}}/browse/{{.Key}}">{{.Key}}</a>{{else}}{{.Key}}{{end}} {{.Summary}}</td>
+                      <td colspan="4" class="st-{{.Status}}">{{.Status}}</td>
+                    </tr>
+                    {{end}}
+                  </tbody>
+                </table>
+              </td>
+            </tr>
+          </template>
+          {{end}}
           {{end}}
         </tbody>
       </table>

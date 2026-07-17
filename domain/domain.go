@@ -59,6 +59,15 @@ func (r Rubric) Find(key string) (Criterion, bool) {
 	return Criterion{}, false
 }
 
+// KeySet returns a set of all criterion keys for fast membership checks.
+func (r Rubric) KeySet() map[string]bool {
+	out := make(map[string]bool, len(r.Criteria))
+	for _, c := range r.Criteria {
+		out[c.Key] = true
+	}
+	return out
+}
+
 // ClassSource records how an epic was mapped to a criterion, for auditability.
 type ClassSource string
 
@@ -107,6 +116,14 @@ type Activity struct {
 	Commits      int `json:"commits"`
 }
 
+// EpicTicket is a child issue of an epic, surfaced individually so the
+// dashboard and narrative can show ticket-level detail.
+type EpicTicket struct {
+	Key     string         `json:"key"`
+	Summary string         `json:"summary"`
+	Status  ProgressStatus `json:"status"`
+}
+
 // ClassifiedEpic is a single epic enriched with its criterion mapping, lens
 // and progress.
 type ClassifiedEpic struct {
@@ -117,6 +134,7 @@ type ClassifiedEpic struct {
 	Progress  float64        `json:"progress"`
 	Status    ProgressStatus `json:"status"`
 	Activity  Activity       `json:"activity"`
+	Tickets   []EpicTicket   `json:"tickets"`
 }
 
 // TicketLink is a Jira issue referenced by a readiness pillar, with its live

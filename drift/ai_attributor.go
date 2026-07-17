@@ -44,11 +44,19 @@ func (a *AIAttributor) Attribute(ctx context.Context, tickets []domain.TicketLin
 	}
 
 	mapping := decodeAttribution(reply)
+	if mapping == nil {
+		return attributeByText(tickets, rubric, texts), nil
+	}
+
+	validKeys := rubric.KeySet()
+	textAttributed := attributeByText(tickets, rubric, texts)
 	out := make([]domain.TicketLink, len(tickets))
 	for i, t := range tickets {
 		out[i] = t
-		if key, ok := mapping[t.Key]; ok {
+		if key, ok := mapping[t.Key]; ok && validKeys[key] {
 			out[i].CriterionKey = key
+		} else {
+			out[i].CriterionKey = textAttributed[i].CriterionKey
 		}
 	}
 	return out, nil
