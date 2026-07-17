@@ -136,7 +136,7 @@ const dashboardTemplate = `<!DOCTYPE html>
           </div>
           {{if .Tickets}}
           <div class="pillar-tickets">
-            {{range .Tickets}}{{if $.JiraBaseURL}}<a href="{{$.JiraBaseURL}}/browse/{{.Key}}">{{.Key}}</a> {{else}}{{.Key}} {{end}}{{end}}
+            {{range .Tickets}}{{if $.JiraBaseURL}}<a href="{{$.JiraBaseURL}}/browse/{{.Key}}">{{.Key}}</a>{{else}}{{.Key}}{{end}} {{.Summary}}<br>{{end}}
           </div>
           {{end}}
         </div>

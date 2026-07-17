@@ -120,10 +120,13 @@ type ClassifiedEpic struct {
 }
 
 // TicketLink is a Jira issue referenced by a readiness pillar, with its live
-// status fetched so drift can be computed.
+// status fetched so drift can be computed. CriterionKey is the pillar the
+// ticket was attributed to (empty when unattributed / off-rubric).
 type TicketLink struct {
-	Key    string         `json:"key"`
-	Status ProgressStatus `json:"status"`
+	Key          string         `json:"key"`
+	Summary      string         `json:"summary"`
+	Status       ProgressStatus `json:"status"`
+	CriterionKey string         `json:"criterion_key"`
 }
 
 // Drift is the verdict when a pillar's hand-set RAG is reconciled against the

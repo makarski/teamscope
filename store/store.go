@@ -85,7 +85,8 @@ CREATE TABLE IF NOT EXISTS ticket_links (
 	id            INTEGER PRIMARY KEY AUTOINCREMENT,
 	state_id      INTEGER NOT NULL REFERENCES criterion_states(id) ON DELETE CASCADE,
 	ticket_key    TEXT    NOT NULL,
-	ticket_status TEXT    NOT NULL
+	ticket_status TEXT    NOT NULL,
+	ticket_summary TEXT   NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_ticket_links_state
@@ -231,7 +232,7 @@ func insertStates(ctx context.Context, tx *sql.Tx, snapID int64, states []domain
 	defer stateStmt.Close()
 
 	ticketStmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO ticket_links (state_id, ticket_key, ticket_status) VALUES (?, ?, ?)`)
+		`INSERT INTO ticket_links (state_id, ticket_key, ticket_status, ticket_summary) VALUES (?, ?, ?, ?)`)
 	if err != nil {
 		return fmt.Errorf("store: prepare ticket insert: %w", err)
 	}
@@ -265,7 +266,7 @@ func insertOneState(ctx context.Context, stmt *sql.Stmt, snapID int64, s domain.
 
 func insertTickets(ctx context.Context, stmt *sql.Stmt, stateID int64, tickets []domain.TicketLink) error {
 	for _, t := range tickets {
-		if _, err := stmt.ExecContext(ctx, stateID, t.Key, string(t.Status)); err != nil {
+		if _, err := stmt.ExecContext(ctx, stateID, t.Key, string(t.Status), t.Summary); err != nil {
 			return fmt.Errorf("store: insert ticket %s: %w", t.Key, err)
 		}
 	}
@@ -434,7 +435,7 @@ func scanEpic(rows *sql.Rows) (domain.ClassifiedEpic, error) {
 func (s *Store) loadStates(ctx context.Context, snapID int64, criteria []domain.Criterion) ([]domain.CriterionState, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT cs.id, cs.criterion_key, cs.done_count, cs.open_count, cs.drift,
-		        tl.ticket_key, tl.ticket_status
+		        tl.ticket_key, tl.ticket_status, tl.ticket_summary
 		 FROM criterion_states cs
 		 LEFT JOIN ticket_links tl ON tl.state_id = cs.id
 		 WHERE cs.snapshot_id = ?
@@ -461,13 +462,14 @@ func (s *Store) loadStates(ctx context.Context, snapID int64, criteria []domain.
 
 func scanStateRow(rows *sql.Rows, critByKey map[string]domain.Criterion, out *[]domain.CriterionState, stateByID map[int64]*domain.CriterionState) error {
 	var (
-		stateID    int64
-		critKey    string
-		drift      string
-		ticketKey  sql.NullString
-		ticketStat sql.NullString
+		stateID       int64
+		critKey       string
+		drift         string
+		ticketKey     sql.NullString
+		ticketStat    sql.NullString
+		ticketSummary sql.NullString
 	)
-	if err := rows.Scan(&stateID, &critKey, new(int), new(int), &drift, &ticketKey, &ticketStat); err != nil {
+	if err := rows.Scan(&stateID, &critKey, new(int), new(int), &drift, &ticketKey, &ticketStat, &ticketSummary); err != nil {
 		return fmt.Errorf("store: scan state: %w", err)
 	}
 
@@ -490,8 +492,9 @@ func scanStateRow(rows *sql.Rows, critByKey map[string]domain.Criterion, out *[]
 	}
 	status := domain.ProgressStatus(ticketStat.String)
 	existing.LinkedKeys = append(existing.LinkedKeys, domain.TicketLink{
-		Key:    ticketKey.String,
-		Status: status,
+		Key:     ticketKey.String,
+		Summary: ticketSummary.String,
+		Status:  status,
 	})
 	if status == domain.StatusDone {
 		existing.DoneCount++

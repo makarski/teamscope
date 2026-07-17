@@ -10,7 +10,6 @@ import (
 
 	"github.com/makarski/teamscope/config"
 	"github.com/makarski/teamscope/domain"
-	"github.com/makarski/teamscope/drift"
 	"github.com/makarski/teamscope/ingest"
 )
 
@@ -54,7 +53,7 @@ type TicketFetcher interface {
 // DriftChecker reconciles claimed readiness against live ticket status.
 // May be nil to skip drift.
 type DriftChecker interface {
-	Compute(ctx context.Context, fetcher TicketFetcher, rubric domain.Rubric, texts []string) ([]domain.CriterionState, error)
+	Compute(ctx context.Context, rubric domain.Rubric, texts []string) ([]domain.CriterionState, error)
 }
 
 // Narrator generates a plain-language progress brief from a snapshot.
@@ -69,19 +68,19 @@ type Runner struct {
 	now  func() time.Time
 }
 
-// Deps bundles the pipeline collaborators. aligner, driftFetcher, drift,
-// and narrator may be nil to skip those stages.
+// Deps bundles the pipeline collaborators. aligner, drift, and narrator may
+// be nil to skip those stages.
 type Deps struct {
-	Fetcher      Fetcher
-	Sources      map[string]RubricSource // keyed by team name
-	Factory      ClassifierFactory
-	Aligner      Aligner
-	Store        Store
-	StatusNames  config.StatusNames
-	GoalsHash    string
-	DriftFetcher TicketFetcher
-	DriftTexts   func(team string, epics []ingest.RawEpic) []string
-	Narrator     Narrator
+	Fetcher     Fetcher
+	Sources     map[string]RubricSource // keyed by team name
+	Factory     ClassifierFactory
+	Aligner     Aligner
+	Store       Store
+	StatusNames config.StatusNames
+	GoalsHash   string
+	Drift       DriftChecker
+	DriftTexts  func(team string, epics []ingest.RawEpic) []string
+	Narrator    Narrator
 }
 
 // NewRunner wires the pipeline collaborators from Deps.
@@ -190,13 +189,13 @@ func (r *Runner) scoreAdvancement(ctx context.Context, epic *ingest.RawEpic, cri
 }
 
 // computeDrift reconciles the rubric's claimed readiness against live Jira
-// ticket status. Returns empty when no drift fetcher is configured.
+// ticket status. Returns empty when no drift checker is configured.
 func (r *Runner) computeDrift(ctx context.Context, rubric domain.Rubric, team config.Team, epics []ingest.RawEpic) []domain.CriterionState {
-	if r.deps.DriftFetcher == nil {
+	if r.deps.Drift == nil {
 		return nil
 	}
 	texts := r.driftTexts(team, epics)
-	states, err := drift.Compute(ctx, r.deps.DriftFetcher, rubric, texts)
+	states, err := r.deps.Drift.Compute(ctx, rubric, texts)
 	if err != nil {
 		return nil
 	}

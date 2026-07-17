@@ -10,6 +10,7 @@ import (
 	"github.com/makarski/teamscope/classify"
 	"github.com/makarski/teamscope/config"
 	"github.com/makarski/teamscope/domain"
+	"github.com/makarski/teamscope/drift"
 	"github.com/makarski/teamscope/goals"
 	"github.com/makarski/teamscope/ingest"
 	"github.com/makarski/teamscope/narrate"
@@ -57,15 +58,15 @@ func (d *deps) buildRunner() (*pipeline.Runner, error) {
 	aiClient := buildAIClient(d.cfg.Anthropic, d.cfg.Bedrock)
 
 	return pipeline.NewRunner(pipeline.Deps{
-		Fetcher:      fetcher,
-		Sources:      sources,
-		Factory:      d.buildFactory(),
-		Aligner:      alignerOrNil(align.NewScorer(d.cfg.Anthropic, d.cfg.Bedrock)),
-		Store:        d.store,
-		StatusNames:  d.cfg.Jira.StatusNames,
-		GoalsHash:    d.cfg.GoalsHash(),
-		DriftFetcher: fetcher,
-		Narrator:     narratorOrNil(aiClient),
+		Fetcher:     fetcher,
+		Sources:     sources,
+		Factory:     d.buildFactory(),
+		Aligner:     alignerOrNil(align.NewScorer(d.cfg.Anthropic, d.cfg.Bedrock)),
+		Store:       d.store,
+		StatusNames: d.cfg.Jira.StatusNames,
+		GoalsHash:   d.cfg.GoalsHash(),
+		Drift:       drift.NewChecker(fetcher, drift.NewAIAttributor(aiClient)),
+		Narrator:    narratorOrNil(aiClient),
 	}), nil
 }
 
