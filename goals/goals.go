@@ -151,8 +151,9 @@ type PageFetcher interface {
 // NewConfluenceSource turns each pillar of a product-readiness page into a
 // criterion: the pillar becomes the criterion, its RAG state the criterion
 // status. This drives readiness-style rubrics straight from the page the team
-// already maintains, with no AI. name labels the resulting rubric; lens
-// (optional) is applied to every criterion.
+// already maintains. Pillar extraction is delegated to the PageFetcher; the
+// default implementation uses an AI backend to read the page. name labels the
+// resulting rubric; lens (optional) is applied to every criterion.
 func NewConfluenceSource(fetcher PageFetcher, pageID string, b Binding) Source {
 	return newDynamicSource(b, func() ([]goalItem, error) {
 		pillars, err := fetcher.FetchReadinessPillars(pageID)

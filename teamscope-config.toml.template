@@ -7,6 +7,9 @@ base_url = "https://your-domain.atlassian.net"
 token = "<jira-api-token>"
 # Custom field id holding an epic's start date (optional).
 start_date_field = "customfield_10015"
+# JQL clause name for the start-date field, used in the epic filter.
+# Defaults to "Start date[Date]" when omitted.
+start_date_jql = "Start date[Date]"
 
   # Map raw Jira statuses onto delivery buckets.
   [jira.status_names]

@@ -30,6 +30,9 @@ type (
 		Token   string `toml:"token"`
 		// StartDateField is the custom field id holding an epic start date.
 		StartDateField string `toml:"start_date_field"`
+		// StartDateJQL is the JQL clause name for the start-date field, used in
+		// the epic filter. Defaults to "Start date[Date]" when empty.
+		StartDateJQL string `toml:"start_date_jql"`
 		// StatusNames maps raw Jira statuses onto done/progress/todo buckets.
 		StatusNames StatusNames `toml:"status_names"`
 	}

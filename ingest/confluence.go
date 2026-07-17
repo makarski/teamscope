@@ -97,10 +97,10 @@ type pillarReply struct {
 func decodePillars(reply string) ([]goals.Pillar, error) {
 	var parsed pillarReply
 	if err := json.Unmarshal([]byte(extractJSON(reply)), &parsed); err != nil {
-		return nil, fmt.Errorf("decode reply %q: %w", reply, err)
+		return nil, fmt.Errorf("decode reply %q: %w", truncateReply(reply), err)
 	}
 	if len(parsed.Pillars) == 0 {
-		return nil, fmt.Errorf("no pillars found in reply %q", reply)
+		return nil, fmt.Errorf("no pillars found in reply %q", truncateReply(reply))
 	}
 
 	pillars := make([]goals.Pillar, 0, len(parsed.Pillars))
@@ -111,9 +111,21 @@ func decodePillars(reply string) ([]goals.Pillar, error) {
 		pillars = append(pillars, goals.Pillar{Key: p.Key, Title: p.Title, Done: p.Done})
 	}
 	if len(pillars) == 0 {
-		return nil, fmt.Errorf("no usable pillars in reply %q", reply)
+		return nil, fmt.Errorf("no usable pillars in reply %q", truncateReply(reply))
 	}
 	return pillars, nil
+}
+
+// maxReplyInError bounds how much of a model reply is echoed into an error, so
+// readiness-page content is not leaked in full and errors stay bounded.
+const maxReplyInError = 200
+
+// truncateReply shortens a model reply for safe inclusion in error messages.
+func truncateReply(reply string) string {
+	if len(reply) <= maxReplyInError {
+		return reply
+	}
+	return reply[:maxReplyInError] + "…"
 }
 
 // extractJSON pulls the first {...} object out of a reply, tolerating any prose

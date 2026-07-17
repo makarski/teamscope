@@ -49,7 +49,11 @@ func NewRawEpic(epic jira.Issue, issues []jira.Issue, description string) RawEpi
 type JiraClient struct {
 	client         *jira.Client
 	startDateField string
+	startDateJQL   string
 }
+
+// defaultStartDateJQL is the standard JQL clause name for an epic start date.
+const defaultStartDateJQL = `"Start date[Date]"`
 
 // NewJiraClient builds a JIRA client from config.
 func NewJiraClient(cfg *config.Jira) (*JiraClient, error) {
@@ -58,7 +62,15 @@ func NewJiraClient(cfg *config.Jira) (*JiraClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ingest: init jira client: %w", err)
 	}
-	return &JiraClient{client: c, startDateField: cfg.StartDateField}, nil
+	startDateJQL := cfg.StartDateJQL
+	if startDateJQL == "" {
+		startDateJQL = defaultStartDateJQL
+	}
+	return &JiraClient{
+		client:         c,
+		startDateField: cfg.StartDateField,
+		startDateJQL:   startDateJQL,
+	}, nil
 }
 
 // FetchEpics returns all epics (with child issues) for a project that are in
@@ -68,10 +80,10 @@ func NewJiraClient(cfg *config.Jira) (*JiraClient, error) {
 func (jc *JiraClient) FetchEpics(project string) ([]RawEpic, error) {
 	jql := fmt.Sprintf(
 		`project = "%s" AND issuetype = Epic AND (`+
-			`"Start date[Date]" > startOfYear() OR `+
+			`%[2]s > startOfYear() OR `+
 			`updated > startOfYear() OR `+
-			`"Start date[Date]" IS EMPTY)`,
-		project,
+			`%[2]s IS EMPTY)`,
+		project, jc.startDateJQL,
 	)
 	raw, err := jc.search(jql)
 	if err != nil {
