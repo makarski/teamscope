@@ -19,17 +19,19 @@ type snapshotSource interface {
 
 // WebRenderer renders the at-a-glance dashboard as static HTML.
 type WebRenderer struct {
-	source snapshotSource
-	tmpl   *template.Template
+	source   snapshotSource
+	tmpl     *template.Template
+	jiraBase string
 }
 
 // NewWebRenderer builds a renderer backed by the given snapshot source.
-func NewWebRenderer(source snapshotSource) (*WebRenderer, error) {
+// jiraBaseURL is used to hyperlink ticket keys (may be empty).
+func NewWebRenderer(source snapshotSource, jiraBaseURL string) (*WebRenderer, error) {
 	tmpl, err := template.New("dashboard").Parse(dashboardTemplate)
 	if err != nil {
 		return nil, fmt.Errorf("report: parse template: %w", err)
 	}
-	return &WebRenderer{source: source, tmpl: tmpl}, nil
+	return &WebRenderer{source: source, tmpl: tmpl, jiraBase: jiraBaseURL}, nil
 }
 
 // Render writes the dashboard for all teams with snapshots to w.
@@ -44,10 +46,20 @@ func (wr *WebRenderer) Render(ctx context.Context, w io.Writer) error {
 		return err
 	}
 
-	if err := wr.tmpl.Execute(w, views); err != nil {
+	data := dashboardData{
+		Teams:       views,
+		JiraBaseURL: wr.jiraBase,
+	}
+
+	if err := wr.tmpl.Execute(w, data); err != nil {
 		return fmt.Errorf("report: execute template: %w", err)
 	}
 	return nil
+}
+
+type dashboardData struct {
+	Teams       []TeamView
+	JiraBaseURL string
 }
 
 func (wr *WebRenderer) collectViews(ctx context.Context, teams []string) ([]TeamView, error) {
@@ -71,105 +83,100 @@ const dashboardTemplate = `<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Teamscope</title>
-<style>
-  :root { color-scheme: light dark; }
-  body { font-family: system-ui, sans-serif; margin: 0; padding: 2rem; background: #0f1117; color: #e6e8ee; }
-  h1 { margin: 0 0 1.5rem; font-size: 1.4rem; }
-  .team { background: #171a23; border: 1px solid #262b38; border-radius: 12px; padding: 1.25rem 1.5rem; margin-bottom: 1.5rem; }
-  .team-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: .75rem; }
-  .team-head h2 { margin: 0; font-size: 1.1rem; }
-  .meta { font-size: .8rem; color: #8a90a2; }
-  .bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin: .5rem 0 1rem; background: #262b38; }
-  .seg-advancing { background: #4f8cff; }
-  .seg-mapped { background: #f0a83c; }
-  .align { display: flex; gap: 1rem; font-size: .82rem; margin-bottom: 1rem; flex-wrap: wrap; }
-  .pill { padding: .15rem .55rem; border-radius: 999px; background: #262b38; }
-  .pill.off { background: #5a1f23; color: #ffb4ba; }
-  .pill.ok { background: #1f3a24; color: #7ee787; }
-  .cov { width: 100%; border-collapse: collapse; font-size: .85rem; margin-bottom: 1rem; }
-  .cov td, .cov th { padding: .35rem .5rem; border-bottom: 1px solid #262b38; text-align: left; }
-  .cov .minibar { display: inline-block; height: 8px; border-radius: 4px; background: #4f8cff; vertical-align: middle; }
-  .cov .track { display: inline-block; width: 90px; height: 8px; border-radius: 4px; background: #262b38; vertical-align: middle; margin-right: .5rem; }
-  .st-done { color: #7ee787; }
-  .st-open { color: #ffcf7a; }
-  .st-blocked { color: #ff7b72; }
-  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
-  th, td { text-align: left; padding: .45rem .5rem; border-bottom: 1px solid #262b38; }
-  th { color: #8a90a2; font-weight: 600; }
-  .tag { font-size: .72rem; padding: .1rem .45rem; border-radius: 5px; background: #262b38; }
-  .status-overdue { color: #ffb4ba; }
-  .status-done { color: #7ee787; }
-  .off-track { margin-bottom: 1rem; }
-  .off-track h3 { font-size: .85rem; color: #ffb4ba; margin: 0 0 .4rem; }
-  .off-track li { font-size: .82rem; margin-bottom: .2rem; }
-  .empty { color: #8a90a2; }
-</style>
+<style>` + dashboardCSS + `</style>
+<script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
 </head>
 <body>
-<h1>Teamscope &mdash; goal alignment &amp; focus</h1>
-{{if not .}}<p class="empty">No snapshots yet. Run <code>teamscope snapshot</code>.</p>{{end}}
-{{range .}}
-<section class="team">
-  <div class="team-head">
-    <h2>{{.Team}}</h2>
-    <span class="meta">rubric: {{.Rubric}} &middot; {{.TakenAt}} &middot; {{.EpicCount}} epics</span>
+<div class="container">
+  <div class="header">
+    <h1>Team<span>scope</span></h1>
+    <span class="meta">goal alignment &middot; drift &middot; focus</span>
   </div>
 
-  <div class="align">
-    <span class="pill ok">blocker focus {{.BlockerFocus}}%</span>
-    {{if .Drift}}<span class="pill off">drift: {{len .Drift}} uncovered</span>{{else}}<span class="pill ok">no drift</span>{{end}}
-    {{if .Unmapped}}<span class="pill off">unmapped {{len .Unmapped}}</span>{{end}}
-    {{range .Lenses}}<span class="pill">{{if .Lens}}{{.Lens}}{{else}}unlensed{{end}} {{.Percent}}%</span>{{end}}
-  </div>
-
-  <table class="cov">
-    <thead><tr><th>Criterion</th><th>Status</th><th>Advancing</th><th>Coverage</th></tr></thead>
-    <tbody>
-      {{range .Coverage}}
-      <tr>
-        <td><strong>{{.Key}}</strong> {{.Title}}</td>
-        <td class="st-{{.Status}}">{{if .Status}}{{.Status}}{{else}}&mdash;{{end}}</td>
-        <td>{{.Advancing}} / {{.Total}}</td>
-        <td><span class="track"><span class="minibar" style="width: {{.Share}}%"></span></span>{{.Share}}%</td>
-      </tr>
-      {{end}}
-      {{if not .Coverage}}<tr><td colspan="4" class="empty">No rubric criteria resolved.</td></tr>{{end}}
-    </tbody>
-  </table>
-
-  {{if .Drift}}
-  <div class="off-track">
-    <h3>Drift &mdash; open goals nobody is advancing</h3>
-    <ul>
-      {{range .Drift}}<li><strong>{{.Key}}</strong> {{.Title}}</li>{{end}}
-    </ul>
-  </div>
-  {{end}}
-
-  {{if .Unmapped}}
-  <div class="off-track">
-    <h3>Unmapped epics &mdash; work serving no declared goal</h3>
-    <ul>
-      {{range .Unmapped}}<li><strong>{{.Key}}</strong> {{.Summary}}</li>{{end}}
-    </ul>
-  </div>
-  {{end}}
-
-  <table>
-    <thead><tr><th>Epic</th><th>Criterion</th><th>Advances</th><th>Status</th><th>Progress</th></tr></thead>
-    <tbody>
-      {{range .Epics}}
-      <tr>
-        <td><strong>{{.Key}}</strong> {{.Summary}}</td>
-        <td>{{if .Criterion}}<span class="tag">{{.Criterion}}</span>{{else}}&mdash;{{end}}</td>
-        <td>{{if eq .Advances "advances"}}<span class="st-done">yes</span>{{else if eq .Advances "stalled"}}<span class="st-blocked">no</span>{{else}}&mdash;{{end}}</td>
-        <td class="status-{{.Status}}">{{.Status}}</td>
-        <td>{{.Progress}}%</td>
-      </tr>
-      {{end}}
-    </tbody>
-  </table>
-</section>
+{{if not .Teams}}
+  <div class="empty">No snapshots yet. Run <code>teamscope snapshot</code>.</div>
 {{end}}
+
+{{range .Teams}}
+  <section class="team" x-data="{ open: true }">
+    <div class="team-head" role="button" tabindex="0" :aria-expanded="open" @click="open = !open" @keydown.enter="open = !open" @keydown.space.prevent="open = !open">
+      <h2>{{.Team}}</h2>
+      <div class="badges">
+        <span class="badge badge-blue">{{.EpicCount}} epics</span>
+        <span class="badge badge-green">focus {{.BlockerFocus}}%</span>
+        {{if .Drift}}<span class="badge badge-red">{{len .Drift}} drift</span>{{else}}<span class="badge badge-green">on track</span>{{end}}
+        {{if .Unmapped}}<span class="badge badge-yellow">{{len .Unmapped}} unmapped</span>{{end}}
+        <span style="color:var(--text-dim);font-size:1.2rem" x-show="!open">&#9660;</span>
+        <span style="color:var(--text-dim);font-size:1.2rem" x-show="open" x-cloak>&#9650;</span>
+      </div>
+    </div>
+
+    <div class="team-body" x-show="open" x-cloak>
+      {{if .Narrative}}
+      <div class="narrative">
+        <div class="label">PO Brief</div>
+        <p>{{.Narrative}}</p>
+      </div>
+      {{end}}
+
+      {{if .States}}
+      <div class="pillars">
+        {{range .States}}
+        <div class="pillar">
+          <div class="pillar-head">
+            <span class="pillar-title">{{.Title}}</span>
+            {{if eq .Drift "optimistic"}}<span class="badge badge-yellow">optimistic</span>
+            {{else if eq .Drift "stale"}}<span class="badge badge-purple">stale</span>
+            {{else if eq .Status "done"}}<span class="badge badge-green">done</span>
+            {{else}}<span class="badge badge-dim">open</span>{{end}}
+          </div>
+          <div class="pillar-stats">
+            {{.DoneCount}} done / {{.OpenCount}} open
+            {{if .Tickets}} &middot; {{len .Tickets}} tickets{{end}}
+          </div>
+          {{if .Tickets}}
+          <div class="pillar-tickets">
+            {{range .Tickets}}{{if $.JiraBaseURL}}<a href="{{$.JiraBaseURL}}/browse/{{.Key}}">{{.Key}}</a> {{else}}{{.Key}} {{end}}{{end}}
+          </div>
+          {{end}}
+        </div>
+        {{end}}
+      </div>
+      {{end}}
+
+      {{if .Coverage}}
+      <table>
+        <thead><tr><th>Criterion</th><th>Status</th><th>Advancing</th><th>Coverage</th></tr></thead>
+        <tbody>
+          {{range .Coverage}}
+          <tr>
+            <td><strong>{{.Key}}</strong> {{.Title}}</td>
+            <td class="st-{{.Status}}">{{if .Status}}{{.Status}}{{else}}&mdash;{{end}}</td>
+            <td>{{.Advancing}} / {{.Total}}</td>
+            <td>{{.Share}}%</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+      {{end}}
+
+      <table>
+        <thead><tr><th>Epic</th><th>Criterion</th><th>Advances</th><th>Status</th><th>Progress</th></tr></thead>
+        <tbody>
+          {{range .Epics}}
+          <tr>
+            <td class="epic-key">{{if $.JiraBaseURL}}<a href="{{$.JiraBaseURL}}/browse/{{.Key}}">{{.Key}}</a>{{else}}{{.Key}}{{end}} {{.Summary}}</td>
+            <td>{{if .Criterion}}<span class="badge badge-dim">{{.Criterion}}</span>{{else}}&mdash;{{end}}</td>
+            <td>{{if eq .Advances "advances"}}<span class="st-done">yes</span>{{else if eq .Advances "stalled"}}<span class="st-overdue">no</span>{{else}}&mdash;{{end}}</td>
+            <td class="st-{{.Status}}">{{.Status}}</td>
+            <td><span class="progress-bar"><span class="progress-fill" style="width: {{.Progress}}%"></span></span> {{.Progress}}%</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{{end}}
+</div>
 </body>
 </html>`

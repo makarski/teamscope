@@ -27,7 +27,7 @@ func runServe(ctx context.Context, configPath string, args []string) error {
 	}
 	defer d.close()
 
-	renderer, err := report.NewWebRenderer(d.store)
+	renderer, err := report.NewWebRenderer(d.store, d.cfg.Jira.BaseURL)
 	if err != nil {
 		return err
 	}

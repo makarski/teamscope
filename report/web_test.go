@@ -112,7 +112,7 @@ func TestWebRender(t *testing.T) {
 		teams: []string{"Payments", "Empty"},
 		snaps: map[string]domain.Snapshot{"Payments": snapshot()},
 	}
-	wr, err := NewWebRenderer(src)
+	wr, err := NewWebRenderer(src, "")
 	if err != nil {
 		t.Fatalf("new renderer: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestWebRender(t *testing.T) {
 	}
 	html := buf.String()
 
-	for _, want := range []string{"Payments", "PT-1", "Billing", "blocker focus 50%", "Drift", "security"} {
+	for _, want := range []string{"Payments", "PT-1", "Billing", "focus 50%", "security"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("html missing %q", want)
 		}
@@ -134,7 +134,7 @@ func TestWebRender(t *testing.T) {
 }
 
 func TestWebRenderEmpty(t *testing.T) {
-	wr, _ := NewWebRenderer(stubSource{teams: nil, snaps: nil})
+	wr, _ := NewWebRenderer(stubSource{teams: nil, snaps: nil}, "")
 	var buf bytes.Buffer
 	if err := wr.Render(context.Background(), &buf); err != nil {
 		t.Fatalf("render: %v", err)

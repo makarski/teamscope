@@ -1,5 +1,6 @@
 // Package pipeline orchestrates ingest, rubric resolution, criterion mapping,
-// advancement scoring and persistence into a stored team snapshot.
+// advancement scoring, drift checking, narrative generation and persistence
+// into a stored team snapshot.
 package pipeline
 
 import (
@@ -9,6 +10,7 @@ import (
 
 	"github.com/makarski/teamscope/config"
 	"github.com/makarski/teamscope/domain"
+	"github.com/makarski/teamscope/drift"
 	"github.com/makarski/teamscope/ingest"
 )
 
@@ -43,22 +45,43 @@ type Store interface {
 	Save(ctx context.Context, snap domain.Snapshot) (int64, error)
 }
 
+// TicketFetcher fetches live Jira ticket status by key, for drift checking.
+// May be nil to skip drift.
+type TicketFetcher interface {
+	FetchByKeys(keys []string) ([]domain.TicketLink, error)
+}
+
+// DriftChecker reconciles claimed readiness against live ticket status.
+// May be nil to skip drift.
+type DriftChecker interface {
+	Compute(ctx context.Context, fetcher TicketFetcher, rubric domain.Rubric, texts []string) ([]domain.CriterionState, error)
+}
+
+// Narrator generates a plain-language progress brief from a snapshot.
+// May be nil to skip narration.
+type Narrator interface {
+	Brief(ctx context.Context, snap domain.Snapshot) (string, error)
+}
+
 // Runner builds and stores a snapshot per team.
 type Runner struct {
 	deps Deps
 	now  func() time.Time
 }
 
-// Deps bundles the pipeline collaborators. aligner may be nil to skip
-// advancement scoring.
+// Deps bundles the pipeline collaborators. aligner, driftFetcher, drift,
+// and narrator may be nil to skip those stages.
 type Deps struct {
-	Fetcher     Fetcher
-	Sources     map[string]RubricSource // keyed by team name
-	Factory     ClassifierFactory
-	Aligner     Aligner
-	Store       Store
-	StatusNames config.StatusNames
-	GoalsHash   string
+	Fetcher      Fetcher
+	Sources      map[string]RubricSource // keyed by team name
+	Factory      ClassifierFactory
+	Aligner      Aligner
+	Store        Store
+	StatusNames  config.StatusNames
+	GoalsHash    string
+	DriftFetcher TicketFetcher
+	DriftTexts   func(team string, epics []ingest.RawEpic) []string
+	Narrator     Narrator
 }
 
 // NewRunner wires the pipeline collaborators from Deps.
@@ -92,13 +115,19 @@ func (r *Runner) Run(ctx context.Context, team config.Team) (int64, error) {
 		classified = append(classified, r.enrich(ctx, &epics[i], rc))
 	}
 
+	states := r.computeDrift(ctx, rubric, team, epics)
+
 	snap := domain.Snapshot{
 		Team:      team.Name,
 		Rubric:    rubric,
 		TakenAt:   rc.now,
 		GoalsHash: r.deps.GoalsHash,
 		Epics:     classified,
+		States:    states,
 	}
+
+	snap.Narrative = r.generateNarrative(ctx, snap)
+
 	return r.deps.Store.Save(ctx, snap)
 }
 
@@ -158,4 +187,44 @@ func (r *Runner) scoreAdvancement(ctx context.Context, epic *ingest.RawEpic, cri
 		return domain.AdvUnscored, ""
 	}
 	return advances, note
+}
+
+// computeDrift reconciles the rubric's claimed readiness against live Jira
+// ticket status. Returns empty when no drift fetcher is configured.
+func (r *Runner) computeDrift(ctx context.Context, rubric domain.Rubric, team config.Team, epics []ingest.RawEpic) []domain.CriterionState {
+	if r.deps.DriftFetcher == nil {
+		return nil
+	}
+	texts := r.driftTexts(team, epics)
+	states, err := drift.Compute(ctx, r.deps.DriftFetcher, rubric, texts)
+	if err != nil {
+		return nil
+	}
+	return states
+}
+
+// driftTexts collects the text sources to scan for referenced ticket keys.
+func (r *Runner) driftTexts(team config.Team, epics []ingest.RawEpic) []string {
+	if r.deps.DriftTexts != nil {
+		return r.deps.DriftTexts(team.Name, epics)
+	}
+	// Default: scan epic descriptions and summaries.
+	texts := make([]string, 0, len(epics))
+	for i := range epics {
+		texts = append(texts, epics[i].Text())
+	}
+	return texts
+}
+
+// generateNarrative produces a PO-style brief for the snapshot. Returns empty
+// when no narrator is configured.
+func (r *Runner) generateNarrative(ctx context.Context, snap domain.Snapshot) string {
+	if r.deps.Narrator == nil {
+		return ""
+	}
+	brief, err := r.deps.Narrator.Brief(ctx, snap)
+	if err != nil {
+		return ""
+	}
+	return brief
 }

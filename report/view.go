@@ -22,6 +22,25 @@ type TeamView struct {
 	OffTrack     []EpicView          // overdue epics needing attention
 	Epics        []EpicView
 	BlockerFocus int // % of active epics working an open criterion
+	States       []PillarStateView
+	Narrative    string
+}
+
+// PillarStateView is the display model for a criterion's drift state.
+type PillarStateView struct {
+	Key       string
+	Title     string
+	Status    domain.Status
+	Drift     domain.Drift
+	DoneCount int
+	OpenCount int
+	Tickets   []TicketView
+}
+
+// TicketView is a linked Jira ticket with its live status.
+type TicketView struct {
+	Key    string
+	Status domain.ProgressStatus
 }
 
 // CriterionCoverage reports how much active work advances one criterion.
@@ -72,7 +91,33 @@ func NewTeamView(snap domain.Snapshot) TeamView {
 		OffTrack:     filterOffTrack(epics),
 		Epics:        epics,
 		BlockerFocus: blockerFocus(snap),
+		States:       pillarStates(snap.States),
+		Narrative:    snap.Narrative,
 	}
+}
+
+// pillarStates converts domain CriterionStates to display views.
+func pillarStates(states []domain.CriterionState) []PillarStateView {
+	views := make([]PillarStateView, 0, len(states))
+	for _, s := range states {
+		tickets := make([]TicketView, 0, len(s.LinkedKeys))
+		for _, t := range s.LinkedKeys {
+			tickets = append(tickets, TicketView{
+				Key:    t.Key,
+				Status: t.Status,
+			})
+		}
+		views = append(views, PillarStateView{
+			Key:       s.Criterion.Key,
+			Title:     s.Criterion.Title,
+			Status:    s.Criterion.Status,
+			Drift:     s.Drift,
+			DoneCount: s.DoneCount,
+			OpenCount: s.OpenCount,
+			Tickets:   tickets,
+		})
+	}
+	return views
 }
 
 // criterionCoverage aggregates epics onto every rubric criterion, including
