@@ -49,7 +49,11 @@ func NewRawEpic(epic jira.Issue, issues []jira.Issue, description string) RawEpi
 type JiraClient struct {
 	client         *jira.Client
 	startDateField string
+	startDateJQL   string
 }
+
+// defaultStartDateJQL is the standard JQL clause name for an epic start date.
+const defaultStartDateJQL = `"Start date[Date]"`
 
 // NewJiraClient builds a JIRA client from config.
 func NewJiraClient(cfg *config.Jira) (*JiraClient, error) {
@@ -58,15 +62,28 @@ func NewJiraClient(cfg *config.Jira) (*JiraClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ingest: init jira client: %w", err)
 	}
-	return &JiraClient{client: c, startDateField: cfg.StartDateField}, nil
+	startDateJQL := cfg.StartDateJQL
+	if startDateJQL == "" {
+		startDateJQL = defaultStartDateJQL
+	}
+	return &JiraClient{
+		client:         c,
+		startDateField: cfg.StartDateField,
+		startDateJQL:   startDateJQL,
+	}, nil
 }
 
-// FetchEpics returns all epics (with child issues) for a project that started
-// this year, mirroring roadsnap's roadmap query.
+// FetchEpics returns all epics (with child issues) for a project that are in
+// active scope this year: started this year, updated this year, or with no
+// start date set. The permissive filter keeps roadsnap's "current work" intent
+// while no longer silently dropping epics that simply lack a start date.
 func (jc *JiraClient) FetchEpics(project string) ([]RawEpic, error) {
 	jql := fmt.Sprintf(
-		`project = "%s" AND issuetype = Epic AND "Start date[Date]" > startOfYear()`,
-		project,
+		`project = "%s" AND issuetype = Epic AND (`+
+			`%[2]s > startOfYear() OR `+
+			`updated > startOfYear() OR `+
+			`%[2]s IS EMPTY)`,
+		project, jc.startDateJQL,
 	)
 	raw, err := jc.search(jql)
 	if err != nil {
@@ -75,12 +92,7 @@ func (jc *JiraClient) FetchEpics(project string) ([]RawEpic, error) {
 
 	epics := make([]RawEpic, 0, len(raw))
 	for _, item := range raw {
-		re := RawEpic{
-			Epic:        item.issue,
-			DueDate:     time.Time(item.issue.Fields.Duedate),
-			StartDate:   jc.parseStartDate(item.rawFields),
-			description: item.description,
-		}
+		re := jc.rawEpicFromItem(item)
 
 		issues, err := jc.fetchEpicIssues(item.issue.Key)
 		if err != nil {
@@ -90,6 +102,16 @@ func (jc *JiraClient) FetchEpics(project string) ([]RawEpic, error) {
 		epics = append(epics, re)
 	}
 	return epics, nil
+}
+
+// rawEpicFromItem builds a RawEpic (without child issues) from a search item.
+func (jc *JiraClient) rawEpicFromItem(item searchItem) RawEpic {
+	return RawEpic{
+		Epic:        item.issue,
+		DueDate:     time.Time(item.issue.Fields.Duedate),
+		StartDate:   jc.parseStartDate(item.rawFields),
+		description: item.description,
+	}
 }
 
 // FetchByLabel returns the epics in a project carrying the given label,
@@ -106,10 +128,7 @@ func (jc *JiraClient) FetchByLabel(project, label string) ([]RawEpic, error) {
 
 	epics := make([]RawEpic, 0, len(raw))
 	for _, item := range raw {
-		epics = append(epics, RawEpic{
-			Epic:        item.issue,
-			description: item.description,
-		})
+		epics = append(epics, jc.rawEpicFromItem(item))
 	}
 	return epics, nil
 }

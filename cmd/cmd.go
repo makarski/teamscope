@@ -47,7 +47,7 @@ func (d *deps) buildRunner() (*pipeline.Runner, error) {
 		return nil, err
 	}
 
-	sources, err := d.buildSources(fetcher)
+	sources, err := d.buildSources(fetcher, ingest.NewConfluenceClient(d.cfg.Jira, d.cfg.Anthropic, d.cfg.Bedrock))
 	if err != nil {
 		return nil, err
 	}
@@ -63,8 +63,9 @@ func (d *deps) buildRunner() (*pipeline.Runner, error) {
 	}), nil
 }
 
-// buildSources resolves each team's rubric source from config.
-func (d *deps) buildSources(fetcher *ingest.JiraClient) (map[string]pipeline.RubricSource, error) {
+// buildSources resolves each team's rubric source from config. pages may be nil
+// when no AI backend is configured; confluence rubrics then fail loudly.
+func (d *deps) buildSources(fetcher *ingest.JiraClient, pages *ingest.ConfluenceClient) (map[string]pipeline.RubricSource, error) {
 	adapter := labelAdapter{client: fetcher, statusNames: d.cfg.Jira.StatusNames}
 	sources := make(map[string]pipeline.RubricSource, len(d.cfg.Teams))
 
@@ -73,7 +74,7 @@ func (d *deps) buildSources(fetcher *ingest.JiraClient) (map[string]pipeline.Rub
 		if !ok {
 			return nil, fmt.Errorf("cmd: team %q references unknown rubric %q", team.Name, team.Rubric)
 		}
-		src, err := buildSource(rubricCfg, adapter)
+		src, err := buildSource(rubricCfg, adapter, pages)
 		if err != nil {
 			return nil, fmt.Errorf("cmd: team %q: %w", team.Name, err)
 		}
@@ -82,7 +83,7 @@ func (d *deps) buildSources(fetcher *ingest.JiraClient) (map[string]pipeline.Rub
 	return sources, nil
 }
 
-func buildSource(r config.Rubric, adapter goals.LabelFetcher) (pipeline.RubricSource, error) {
+func buildSource(r config.Rubric, adapter goals.LabelFetcher, pages *ingest.ConfluenceClient) (pipeline.RubricSource, error) {
 	switch r.Source {
 	case "static", "":
 		return goals.NewStaticSource(staticRubric(r)), nil
@@ -90,10 +91,24 @@ func buildSource(r config.Rubric, adapter goals.LabelFetcher) (pipeline.RubricSo
 		if r.Label == "" || r.LabelProject == "" {
 			return nil, fmt.Errorf("rubric %q: jira_label source needs label and label_project", r.Name)
 		}
-		return goals.NewJiraLabelSource(adapter, r.LabelProject, r.Label, r.Name, domain.Lens(r.Lens)), nil
+		return goals.NewJiraLabelSource(adapter, r.LabelProject, r.Label, goals.Binding{Name: r.Name, Lens: domain.Lens(r.Lens)}), nil
+	case "confluence":
+		return confluenceSource(r, pages)
 	default:
-		return nil, fmt.Errorf("rubric %q: unknown source %q (want: static | jira_label)", r.Name, r.Source)
+		return nil, fmt.Errorf("rubric %q: unknown source %q (want: static | jira_label | confluence)", r.Name, r.Source)
 	}
+}
+
+// confluenceSource builds an AI-backed readiness source, requiring both a
+// page_id and a configured AI backend (pages is nil without one).
+func confluenceSource(r config.Rubric, pages *ingest.ConfluenceClient) (pipeline.RubricSource, error) {
+	if r.PageID == "" {
+		return nil, fmt.Errorf("rubric %q: confluence source needs page_id", r.Name)
+	}
+	if pages == nil {
+		return nil, fmt.Errorf("rubric %q: confluence source needs an AI backend ([anthropic] or [bedrock])", r.Name)
+	}
+	return goals.NewConfluenceSource(pages, r.PageID, goals.Binding{Name: r.Name, Lens: domain.Lens(r.Lens)}), nil
 }
 
 func staticRubric(r config.Rubric) domain.Rubric {

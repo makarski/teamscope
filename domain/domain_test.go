@@ -9,8 +9,14 @@ func TestRubricKeysAndFind(t *testing.T) {
 	}}
 
 	keys := r.Keys()
-	if len(keys) != 2 || keys[0] != "security" || keys[1] != "pricing" {
-		t.Fatalf("Keys order wrong: %v", keys)
+	if len(keys) != 2 {
+		t.Fatalf("Keys len = %d, want 2: %v", len(keys), keys)
+	}
+	if keys[0] != "security" {
+		t.Fatalf("Keys[0] = %q, want security", keys[0])
+	}
+	if keys[1] != "pricing" {
+		t.Fatalf("Keys[1] = %q, want pricing", keys[1])
 	}
 
 	c, ok := r.Find("pricing")
