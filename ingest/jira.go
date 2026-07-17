@@ -80,12 +80,7 @@ func (jc *JiraClient) FetchEpics(project string) ([]RawEpic, error) {
 
 	epics := make([]RawEpic, 0, len(raw))
 	for _, item := range raw {
-		re := RawEpic{
-			Epic:        item.issue,
-			DueDate:     time.Time(item.issue.Fields.Duedate),
-			StartDate:   jc.parseStartDate(item.rawFields),
-			description: item.description,
-		}
+		re := jc.rawEpicFromItem(item)
 
 		issues, err := jc.fetchEpicIssues(item.issue.Key)
 		if err != nil {
@@ -95,6 +90,16 @@ func (jc *JiraClient) FetchEpics(project string) ([]RawEpic, error) {
 		epics = append(epics, re)
 	}
 	return epics, nil
+}
+
+// rawEpicFromItem builds a RawEpic (without child issues) from a search item.
+func (jc *JiraClient) rawEpicFromItem(item searchItem) RawEpic {
+	return RawEpic{
+		Epic:        item.issue,
+		DueDate:     time.Time(item.issue.Fields.Duedate),
+		StartDate:   jc.parseStartDate(item.rawFields),
+		description: item.description,
+	}
 }
 
 // FetchByLabel returns the epics in a project carrying the given label,
@@ -111,10 +116,7 @@ func (jc *JiraClient) FetchByLabel(project, label string) ([]RawEpic, error) {
 
 	epics := make([]RawEpic, 0, len(raw))
 	for _, item := range raw {
-		epics = append(epics, RawEpic{
-			Epic:        item.issue,
-			description: item.description,
-		})
+		epics = append(epics, jc.rawEpicFromItem(item))
 	}
 	return epics, nil
 }
