@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/makarski/teamscope/domain"
 )
@@ -17,6 +18,25 @@ import (
 // TicketFetcher fetches the live status of Jira issues by key.
 type TicketFetcher interface {
 	FetchByKeys(keys []string) ([]domain.TicketLink, error)
+}
+
+// Attributor maps each ticket to the criterion it serves. Returns the
+// criterion key, or "" when the ticket is off-rubric. May be nil — tickets
+// are then attributed by text proximity as a deterministic fallback.
+type Attributor interface {
+	Attribute(ctx context.Context, tickets []domain.TicketLink, rubric domain.Rubric, texts []string) ([]domain.TicketLink, error)
+}
+
+// Checker bundles the collaborators needed to compute drift. Attributor may
+// be nil, in which case a deterministic text-proximity attributor is used.
+type Checker struct {
+	Fetcher    TicketFetcher
+	Attributor Attributor
+}
+
+// NewChecker builds a drift checker from a fetcher and an optional attributor.
+func NewChecker(fetcher TicketFetcher, attr Attributor) *Checker {
+	return &Checker{Fetcher: fetcher, Attributor: attr}
 }
 
 // keyPattern matches Jira issue keys like MARIO-3730, TTTL-28, AP-123.
@@ -37,34 +57,50 @@ func ExtractKeys(text string) []string {
 	return keys
 }
 
-// Compute reconciles each criterion's claimed status against the live status of
-// the tickets referenced in the provided text (typically the Confluence page
-// text and/or the tracking epic's description). It returns one CriterionState
-// per criterion, in rubric order.
-func Compute(ctx context.Context, fetcher TicketFetcher, rubric domain.Rubric, texts []string) ([]domain.CriterionState, error) {
+// Compute reconciles each criterion's claimed status against the live status
+// of the tickets referenced in the provided text (typically the Confluence
+// page text and/or the tracking epic's description). It returns one
+// CriterionState per criterion, in rubric order.
+//
+// If the Checker has an Attributor, it maps each ticket to its best-fit
+// criterion. Otherwise, a deterministic text-proximity attributor is used: a
+// ticket is attributed to the criterion whose title appears nearest before the
+// ticket key in the source text.
+func (c *Checker) Compute(ctx context.Context, rubric domain.Rubric, texts []string) ([]domain.CriterionState, error) {
 	allKeys := collectKeys(texts)
 	if len(allKeys) == 0 {
 		return emptyStates(rubric), nil
 	}
 
-	tickets, err := fetcher.FetchByKeys(allKeys)
+	tickets, err := c.Fetcher.FetchByKeys(allKeys)
 	if err != nil {
 		return nil, fmt.Errorf("drift: fetch tickets: %w", err)
 	}
 
-	// Map each ticket to the criterion it belongs to. A ticket belongs to a
-	// criterion if the criterion's key appears near the ticket key in the text.
-	// For simplicity in this first pass, we attribute all linked tickets to
-	// every criterion and compute aggregate drift per criterion from the full
-	// set. Per-criterion attribution will follow when the AI labels tickets.
-	linked := make([]domain.TicketLink, 0, len(tickets))
-	for _, t := range tickets {
-		linked = append(linked, t)
+	if c.Attributor != nil {
+		tickets, err = c.Attributor.Attribute(ctx, tickets, rubric, texts)
+		if err != nil {
+			return nil, fmt.Errorf("drift: attribute tickets: %w", err)
+		}
+	} else {
+		tickets = attributeByText(tickets, rubric, texts)
 	}
 
-	done, open := countDoneOpen(linked)
+	return buildStates(rubric, tickets), nil
+}
+
+// buildStates groups tickets by their attributed criterion key and computes
+// drift per criterion.
+func buildStates(rubric domain.Rubric, tickets []domain.TicketLink) []domain.CriterionState {
+	byCriterion := map[string][]domain.TicketLink{}
+	for _, t := range tickets {
+		byCriterion[t.CriterionKey] = append(byCriterion[t.CriterionKey], t)
+	}
+
 	states := make([]domain.CriterionState, len(rubric.Criteria))
 	for i, c := range rubric.Criteria {
+		linked := byCriterion[c.Key]
+		done, open := countDoneOpen(linked)
 		states[i] = domain.CriterionState{
 			Criterion:  c,
 			LinkedKeys: linked,
@@ -73,7 +109,44 @@ func Compute(ctx context.Context, fetcher TicketFetcher, rubric domain.Rubric, t
 			Drift:      verdict(c.Status, done, open),
 		}
 	}
-	return states, nil
+	return states
+}
+
+// attributeByText is the deterministic fallback: for each ticket, find the
+// criterion whose title appears closest to the ticket key in the source text.
+// Tickets with no nearby criterion title are left unattributed (off-rubric).
+func attributeByText(tickets []domain.TicketLink, rubric domain.Rubric, texts []string) []domain.TicketLink {
+	combined := strings.Join(texts, "\n")
+	out := make([]domain.TicketLink, len(tickets))
+	for i, t := range tickets {
+		out[i] = t
+		out[i].CriterionKey = nearestCriterion(t.Key, combined, rubric)
+	}
+	return out
+}
+
+// nearestCriterion finds the criterion whose title appears closest before key
+// in text (as a section header precedes its items). Returns "" when no
+// criterion title precedes the key.
+func nearestCriterion(key, text string, rubric domain.Rubric) string {
+	keyIdx := strings.Index(text, key)
+	if keyIdx == -1 {
+		return ""
+	}
+	bestKey := ""
+	bestDist := -1
+	for _, c := range rubric.Criteria {
+		titleIdx := strings.LastIndex(text[:keyIdx], c.Title)
+		if titleIdx == -1 {
+			continue
+		}
+		dist := keyIdx - titleIdx
+		if bestDist == -1 || dist < bestDist {
+			bestDist = dist
+			bestKey = c.Key
+		}
+	}
+	return bestKey
 }
 
 // collectKeys merges keys from all texts, de-duplicated.

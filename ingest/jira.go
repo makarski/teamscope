@@ -125,8 +125,9 @@ func (jc *JiraClient) FetchByKeys(keys []string) ([]domain.TicketLink, error) {
 	out := make([]domain.TicketLink, 0, len(raw))
 	for _, item := range raw {
 		out = append(out, domain.TicketLink{
-			Key:    item.issue.Key,
-			Status: ticketStatus(item.issue),
+			Key:     item.issue.Key,
+			Summary: item.issue.Fields.Summary,
+			Status:  ticketStatus(item.issue),
 		})
 	}
 	return out, nil

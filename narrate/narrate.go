@@ -25,28 +25,27 @@ const maxTokens = 2048
 // is plain text (no markdown) suitable for rendering in a dashboard panel or
 // posting to Slack. Returns an empty string when no AI is configured.
 func Brief(ctx context.Context, ai Completer, snap domain.Snapshot) (string, error) {
-	if ai == nil {
-		return "", nil
-	}
-	reply, err := ai.Complete(ctx, briefPrompt(snap), maxTokens)
-	if err != nil {
-		return "", fmt.Errorf("narrate: team %q: %w", snap.Team, err)
-	}
-	return strings.TrimSpace(reply), nil
+	return complete(ctx, ai, briefPrompt(snap), fmt.Sprintf("team %q", snap.Team))
 }
 
 // ExecutiveSummary generates a cross-team executive brief from multiple team
 // narratives and their snapshot headlines. Returns empty when no AI is configured.
 func ExecutiveSummary(ctx context.Context, ai Completer, snaps []domain.Snapshot) (string, error) {
-	if ai == nil {
-		return "", nil
-	}
 	if len(snaps) == 0 {
 		return "", nil
 	}
-	reply, err := ai.Complete(ctx, executivePrompt(snaps), maxTokens)
+	return complete(ctx, ai, executivePrompt(snaps), "executive summary")
+}
+
+// complete is the shared path for both Brief and ExecutiveSummary: nil-safe
+// AI call with trimmed reply.
+func complete(ctx context.Context, ai Completer, prompt, label string) (string, error) {
+	if ai == nil {
+		return "", nil
+	}
+	reply, err := ai.Complete(ctx, prompt, maxTokens)
 	if err != nil {
-		return "", fmt.Errorf("narrate: executive summary: %w", err)
+		return "", fmt.Errorf("narrate: %s: %w", label, err)
 	}
 	return strings.TrimSpace(reply), nil
 }
@@ -78,11 +77,33 @@ func briefPrompt(snap domain.Snapshot) string {
 
 	b.WriteString("\nEpics:\n")
 	for _, e := range snap.Epics {
-		b.WriteString(fmt.Sprintf("  - %s %s [%s] criterion=%s advances=%s progress=%.0f%%\n",
-			e.Key, e.Summary, e.Status, e.Criterion.Key, e.Criterion.Advances, e.Progress*100))
+		b.WriteString(epicLine(e))
 	}
 
 	return b.String()
+}
+
+// epicLine formats one epic for the narrative prompt, including ticket counts.
+func epicLine(e domain.ClassifiedEpic) string {
+	line := fmt.Sprintf("  - %s %s [%s] criterion=%s advances=%s progress=%.0f%%",
+		e.Key, e.Summary, e.Status, e.Criterion.Key, e.Criterion.Advances, e.Progress*100)
+	if len(e.Tickets) > 0 {
+		done, open := countTicketStatuses(e.Tickets)
+		line += fmt.Sprintf(" (%d tickets: %d done, %d open)", len(e.Tickets), done, open)
+	}
+	return line + "\n"
+}
+
+// countTicketStatuses tallies done vs open child tickets.
+func countTicketStatuses(tickets []domain.EpicTicket) (done, open int) {
+	for _, t := range tickets {
+		if t.Status == domain.StatusDone {
+			done++
+		} else {
+			open++
+		}
+	}
+	return done, open
 }
 
 func executivePrompt(snaps []domain.Snapshot) string {
