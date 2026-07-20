@@ -30,14 +30,15 @@ var testRubric = domain.Rubric{Name: "work", Criteria: []domain.Criterion{
 }}
 
 type stubFetcher struct {
-	epics []ingest.RawEpic
-	err   error
+	epics      []ingest.RawEpic
+	standalone []ingest.RawEpic
+	err        error
 }
 
 func (s stubFetcher) FetchEpics(string) ([]ingest.RawEpic, error) { return s.epics, s.err }
 
 func (s stubFetcher) FetchStandaloneIssues(string, map[string]bool) ([]ingest.RawEpic, error) {
-	return nil, nil
+	return s.standalone, s.err
 }
 
 type stubSource struct{ err error }
@@ -184,5 +185,31 @@ func TestRunRubricSourceErrorPropagates(t *testing.T) {
 
 	if _, err := runner.Run(context.Background(), config.Team{Name: "P", JiraProjects: []string{"PT"}}); err == nil {
 		t.Error("expected rubric source error to propagate")
+	}
+}
+
+func TestRunIncludesStandaloneIssues(t *testing.T) {
+	epic := rawEpic("PT-1", "Billing epic", "In Progress")
+	standalone := rawEpic("PT-99", "Standalone bug fix", "To Do")
+	fetcher := stubFetcher{
+		epics:      []ingest.RawEpic{epic},
+		standalone: []ingest.RawEpic{standalone},
+	}
+	store := &stubStore{}
+	runner := newRunner(fetcher, stubSource{}, stubAligner{}, store)
+
+	if _, err := runner.Run(context.Background(), config.Team{Name: "P", JiraProjects: []string{"PT"}}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	keys := make(map[string]bool, len(store.saved.Epics))
+	for _, e := range store.saved.Epics {
+		keys[e.Key] = true
+	}
+	if !keys["PT-1"] {
+		t.Error("epic PT-1 missing from snapshot")
+	}
+	if !keys["PT-99"] {
+		t.Error("standalone PT-99 missing from snapshot")
 	}
 }

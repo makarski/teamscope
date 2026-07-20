@@ -264,24 +264,39 @@ type searchItem struct {
 func (jc *JiraClient) search(jql string) ([]searchItem, error) {
 	endpoint := "/rest/api/3/search/jql"
 
-	params := url.Values{}
-	params.Add("jql", jql)
-	params.Add("fields", "*all,-comment")
-	params.Add("expand", "changelog,names")
+	var allIssues []json.RawMessage
+	nextPageToken := ""
 
-	req, err := jc.client.NewRequest("GET", endpoint+"?"+params.Encode(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("ingest: build request: %w", err)
+	for {
+		params := url.Values{}
+		params.Add("jql", jql)
+		params.Add("fields", "*all,-comment")
+		params.Add("expand", "changelog,names")
+		if nextPageToken != "" {
+			params.Add("nextPageToken", nextPageToken)
+		}
+
+		req, err := jc.client.NewRequest("GET", endpoint+"?"+params.Encode(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("ingest: build request: %w", err)
+		}
+
+		var response struct {
+			Issues        []json.RawMessage `json:"issues"`
+			NextPageToken string            `json:"nextPageToken"`
+		}
+		if _, err := jc.client.Do(req, &response); err != nil {
+			return nil, fmt.Errorf("ingest: execute jql %q: %w", jql, err)
+		}
+
+		allIssues = append(allIssues, response.Issues...)
+		if response.NextPageToken == "" {
+			break
+		}
+		nextPageToken = response.NextPageToken
 	}
 
-	var response struct {
-		Issues []json.RawMessage `json:"issues"`
-	}
-	if _, err := jc.client.Do(req, &response); err != nil {
-		return nil, fmt.Errorf("ingest: execute jql %q: %w", jql, err)
-	}
-
-	return decodeSearchItems(response.Issues)
+	return decodeSearchItems(allIssues)
 }
 
 func decodeSearchItems(rawIssues []json.RawMessage) ([]searchItem, error) {

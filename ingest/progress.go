@@ -12,7 +12,9 @@ import (
 // ProgressOf computes the delivery status and completion ratio of an epic or
 // standalone issue, applying status-bucketing rules against the configured
 // statuses. For issues with no child tickets, progress is derived from the
-// issue's own status: done = 1.0, todo = 0.0, in-progress = 0.5.
+// issue's own status: done = 1.0, todo = 0.0, in-progress = 0.5. An overdue
+// standalone issue (past its due date) is reported as StatusOverdue with 0.5
+// progress.
 func ProgressOf(re *RawEpic, sn config.StatusNames, now time.Time) (domain.ProgressStatus, float64) {
 	total := len(re.Issues)
 	if total == 0 {
