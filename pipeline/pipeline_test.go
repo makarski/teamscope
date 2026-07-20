@@ -36,6 +36,10 @@ type stubFetcher struct {
 
 func (s stubFetcher) FetchEpics(string) ([]ingest.RawEpic, error) { return s.epics, s.err }
 
+func (s stubFetcher) FetchStandaloneIssues(string, map[string]bool) ([]ingest.RawEpic, error) {
+	return nil, nil
+}
+
 type stubSource struct{ err error }
 
 func (s stubSource) Rubric(context.Context, string) (domain.Rubric, error) {

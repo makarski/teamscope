@@ -9,19 +9,35 @@ import (
 	"github.com/makarski/teamscope/domain"
 )
 
-// ProgressOf computes the delivery status and completion ratio of an epic,
-// applying roadsnap's status-bucketing rules against the configured statuses.
+// ProgressOf computes the delivery status and completion ratio of an epic or
+// standalone issue, applying status-bucketing rules against the configured
+// statuses. For issues with no child tickets, progress is derived from the
+// issue's own status: done = 1.0, todo = 0.0, in-progress = 0.5.
 func ProgressOf(re *RawEpic, sn config.StatusNames, now time.Time) (domain.ProgressStatus, float64) {
-	doneCnt := countIssues(re.Issues, sn.Done)
 	total := len(re.Issues)
-
-	ratio := 0.0
-	if total > 0 {
-		ratio = float64(doneCnt) / float64(total)
+	if total == 0 {
+		return standaloneProgress(re, sn, now)
 	}
 
+	doneCnt := countIssues(re.Issues, sn.Done)
+	ratio := float64(doneCnt) / float64(total)
 	status := deriveStatus(re, sn, doneCnt, total, now)
 	return status, ratio
+}
+
+// standaloneProgress handles issues with no child tickets.
+func standaloneProgress(re *RawEpic, sn config.StatusNames, now time.Time) (domain.ProgressStatus, float64) {
+	epicStatus := re.Epic.Fields.Status.Name
+	if contains(sn.Done, epicStatus) {
+		return domain.StatusDone, 1.0
+	}
+	if contains(sn.ToDo, epicStatus) {
+		return domain.StatusToDo, 0.0
+	}
+	if isOverdue(re, now) {
+		return domain.StatusOverdue, 0.5
+	}
+	return domain.StatusOngoing, 0.5
 }
 
 func deriveStatus(re *RawEpic, sn config.StatusNames, doneCnt, total int, now time.Time) domain.ProgressStatus {
