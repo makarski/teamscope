@@ -53,6 +53,14 @@ func (stubClassifier) Classify(context.Context, *ingest.RawEpic) domain.Criterio
 	return domain.CriterionRef{Key: "business", Source: domain.SourceLabel}
 }
 
+func (stubClassifier) ClassifyAll(_ context.Context, epics []*ingest.RawEpic) []domain.CriterionRef {
+	refs := make([]domain.CriterionRef, len(epics))
+	for i := range epics {
+		refs[i] = domain.CriterionRef{Key: "business", Source: domain.SourceLabel}
+	}
+	return refs
+}
+
 type stubFactory struct{}
 
 func (stubFactory) For(domain.Rubric) Classifier { return stubClassifier{} }

@@ -46,9 +46,9 @@ func TestStripDescriptionAllowsADFDecode(t *testing.T) {
 		}
 	}`)
 
-	stripped, err := stripDescription(raw)
+	stripped, err := stripADFFields(raw)
 	if err != nil {
-		t.Fatalf("stripDescription: %v", err)
+		t.Fatalf("stripADFFields: %v", err)
 	}
 
 	var issue jira.Issue

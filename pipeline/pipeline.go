@@ -6,6 +6,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/andygrunwald/go-jira"
@@ -33,6 +34,7 @@ type ClassifierFactory interface {
 // Classifier maps an epic onto its team's rubric.
 type Classifier interface {
 	Classify(ctx context.Context, epic *ingest.RawEpic) domain.CriterionRef
+	ClassifyAll(ctx context.Context, epics []*ingest.RawEpic) []domain.CriterionRef
 }
 
 // Aligner scores whether an epic advances a criterion. A nil Aligner disables
@@ -109,14 +111,25 @@ func (r *Runner) Run(ctx context.Context, team config.Team) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	slog.Info("fetched issues", "team", team.Name, "epics", len(epics))
 
 	rc := runContext{rubric: rubric, classifier: r.deps.Factory.For(rubric), now: r.now()}
+
+	// Batch classify all epics in one pass to avoid N+1 AI calls.
+	epicPtrs := make([]*ingest.RawEpic, len(epics))
+	for i := range epics {
+		epicPtrs[i] = &epics[i]
+	}
+	refs := rc.classifier.ClassifyAll(ctx, epicPtrs)
+
 	classified := make([]domain.ClassifiedEpic, 0, len(epics))
 	for i := range epics {
-		classified = append(classified, r.enrich(ctx, &epics[i], rc))
+		classified = append(classified, r.enrichWithRef(ctx, &epics[i], refs[i], rc))
 	}
+	slog.Info("enriched epics", "team", team.Name, "count", len(classified))
 
 	states := r.computeDrift(ctx, rubric, team, epics)
+	slog.Info("computed drift", "team", team.Name, "states", len(states))
 
 	snap := domain.Snapshot{
 		Team:      team.Name,
@@ -147,12 +160,14 @@ func (r *Runner) resolveRubric(ctx context.Context, team config.Team) (domain.Ru
 func (r *Runner) collectEpics(team config.Team) ([]ingest.RawEpic, error) {
 	var all []ingest.RawEpic
 	for _, project := range team.JiraProjects {
+		slog.Info("fetching epics", "team", team.Name, "project", project)
 		epics, err := r.deps.Fetcher.FetchEpics(project)
 		if err != nil {
 			return nil, fmt.Errorf("pipeline: team %q: %w", team.Name, err)
 		}
 		all = append(all, epics...)
 
+		slog.Info("fetching standalone issues", "team", team.Name, "project", project)
 		standalone, err := r.deps.Fetcher.FetchStandaloneIssues(project, childKeys(epics))
 		if err != nil {
 			return nil, fmt.Errorf("pipeline: team %q: standalone: %w", team.Name, err)
@@ -177,6 +192,12 @@ func childKeys(epics []ingest.RawEpic) map[string]bool {
 // enrich maps, scores advancement and computes progress for a single epic.
 func (r *Runner) enrich(ctx context.Context, epic *ingest.RawEpic, rc runContext) domain.ClassifiedEpic {
 	ref := rc.classifier.Classify(ctx, epic)
+	return r.enrichWithRef(ctx, epic, ref, rc)
+}
+
+// enrichWithRef takes a pre-computed criterion ref (from batch classification)
+// and completes the enrichment: progress, lens, advancement scoring.
+func (r *Runner) enrichWithRef(ctx context.Context, epic *ingest.RawEpic, ref domain.CriterionRef, rc runContext) domain.ClassifiedEpic {
 	status, progress := ingest.ProgressOf(epic, r.deps.StatusNames, rc.now)
 
 	lens := domain.LensNone

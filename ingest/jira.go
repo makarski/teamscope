@@ -78,22 +78,32 @@ func NewJiraClient(cfg *config.Jira) (*JiraClient, error) {
 // active scope this year: started this year, updated this year, or with no
 // start date set. The permissive filter keeps roadsnap's "current work" intent
 // while no longer silently dropping epics that simply lack a start date.
+//
+// Child issues are fetched in a single batched query (parent IN (...)) rather
+// than one call per epic, to avoid N+1 HTTP round-trips on boards with many
+// epics.
 func (jc *JiraClient) FetchEpics(project string) ([]RawEpic, error) {
 	raw, err := jc.searchActiveIssues(activeQuery{project: project, typeFilter: `issuetype = Epic`})
 	if err != nil {
 		return nil, fmt.Errorf("ingest: fetch epics for %s: %w", project, err)
 	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
 
+	epicKeys := make([]string, 0, len(raw))
 	epics := make([]RawEpic, 0, len(raw))
 	for _, item := range raw {
-		re := jc.rawEpicFromItem(item)
+		epicKeys = append(epicKeys, item.issue.Key)
+		epics = append(epics, jc.rawEpicFromItem(item))
+	}
 
-		issues, err := jc.fetchEpicIssues(item.issue.Key)
-		if err != nil {
-			return nil, err
-		}
-		re.Issues = issues
-		epics = append(epics, re)
+	children, err := jc.fetchEpicChildren(epicKeys)
+	if err != nil {
+		return nil, err
+	}
+	for i := range epics {
+		epics[i].Issues = children[epics[i].Epic.Key]
 	}
 	return epics, nil
 }
@@ -221,16 +231,35 @@ func (r *RawEpic) EpicStatus() string {
 	return r.Epic.Fields.Status.Name
 }
 
-func (jc *JiraClient) fetchEpicIssues(epicKey string) ([]jira.Issue, error) {
-	raw, err := jc.search(fmt.Sprintf("parent = %s", epicKey))
-	if err != nil {
-		return nil, fmt.Errorf("ingest: fetch issues for epic %s: %w", epicKey, err)
+// fetchEpicChildren fetches child issues for all epic keys in a single batched
+// query (parent IN (...)) and groups them by parent key. Jira limits the IN
+// clause length, so keys are chunked into batches of 100.
+const epicChildBatchSize = 100
+
+func (jc *JiraClient) fetchEpicChildren(epicKeys []string) (map[string][]jira.Issue, error) {
+	children := make(map[string][]jira.Issue)
+	for start := 0; start < len(epicKeys); start += epicChildBatchSize {
+		end := start + epicChildBatchSize
+		if end > len(epicKeys) {
+			end = len(epicKeys)
+		}
+		batch := epicKeys[start:end]
+
+		quoted := make([]string, len(batch))
+		for i, k := range batch {
+			quoted[i] = fmt.Sprintf("%q", k)
+		}
+		jql := "parent IN (" + strings.Join(quoted, ", ") + ")"
+		raw, err := jc.search(jql)
+		if err != nil {
+			return nil, fmt.Errorf("ingest: fetch epic children: %w", err)
+		}
+		for _, item := range raw {
+			parent := item.issue.Fields.Parent.Key
+			children[parent] = append(children[parent], item.issue)
+		}
 	}
-	issues := make([]jira.Issue, 0, len(raw))
-	for _, item := range raw {
-		issues = append(issues, item.issue)
-	}
-	return issues, nil
+	return children, nil
 }
 
 func (jc *JiraClient) parseStartDate(rawFields map[string]json.RawMessage) time.Time {
@@ -309,9 +338,9 @@ func decodeSearchItems(rawIssues []json.RawMessage) ([]searchItem, error) {
 
 		description := adfPlainText(rawFields["description"])
 
-		// Strip description before decoding into jira.Issue: Jira API v3
-		// returns it as an ADF object, but go-jira expects a plain string.
-		issueJSON, err := stripDescription(raw)
+		// Strip ADF-typed fields before decoding into jira.Issue: Jira API v3
+		// returns them as ADF objects, but go-jira expects plain strings.
+		issueJSON, err := stripADFFields(raw)
 		if err != nil {
 			return nil, err
 		}
@@ -340,10 +369,14 @@ func decodeRawFields(raw json.RawMessage) (map[string]json.RawMessage, error) {
 	return envelope.Fields, nil
 }
 
-// stripDescription removes fields.description from the raw issue JSON so the
-// go-jira Issue struct (which types description as a string) can decode ADF
-// projects without error.
-func stripDescription(raw json.RawMessage) (json.RawMessage, error) {
+// adfFields are Jira API v3 fields returned as ADF objects that go-jira types
+// as strings. They must be stripped from the raw JSON before decoding into
+// jira.Issue, otherwise unmarshalling fails.
+var adfFields = []string{"description", "environment"}
+
+// stripADFFields removes ADF-typed fields from the raw issue JSON so the
+// go-jira Issue struct (which types them as strings) can decode without error.
+func stripADFFields(raw json.RawMessage) (json.RawMessage, error) {
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return nil, fmt.Errorf("ingest: decode issue envelope: %w", err)
@@ -358,7 +391,9 @@ func stripDescription(raw json.RawMessage) (json.RawMessage, error) {
 	if err := json.Unmarshal(fields, &fieldMap); err != nil {
 		return nil, fmt.Errorf("ingest: decode fields map: %w", err)
 	}
-	delete(fieldMap, "description")
+	for _, f := range adfFields {
+		delete(fieldMap, f)
+	}
 
 	patchedFields, err := json.Marshal(fieldMap)
 	if err != nil {
