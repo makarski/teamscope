@@ -67,6 +67,18 @@ func TestProgressOf(t *testing.T) {
 			name:       "no children ongoing",
 			epic:       epicWith("In Progress", future),
 			wantStatus: domain.StatusOngoing,
+			wantRatio:  0.5,
+		},
+		{
+			name:       "standalone done",
+			epic:       epicWith("Done", future),
+			wantStatus: domain.StatusDone,
+			wantRatio:  1.0,
+		},
+		{
+			name:       "standalone todo",
+			epic:       epicWith("To Do", future),
+			wantStatus: domain.StatusToDo,
 			wantRatio:  0.0,
 		},
 	}

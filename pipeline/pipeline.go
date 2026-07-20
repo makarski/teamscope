@@ -14,9 +14,10 @@ import (
 	"github.com/makarski/teamscope/ingest"
 )
 
-// Fetcher fetches epics for a Jira project.
+// Fetcher fetches epics and standalone issues for a Jira project.
 type Fetcher interface {
 	FetchEpics(project string) ([]ingest.RawEpic, error)
+	FetchStandaloneIssues(project string, excludeKeys map[string]bool) ([]ingest.RawEpic, error)
 }
 
 // RubricSource resolves the rubric a team is measured against.
@@ -151,8 +152,26 @@ func (r *Runner) collectEpics(team config.Team) ([]ingest.RawEpic, error) {
 			return nil, fmt.Errorf("pipeline: team %q: %w", team.Name, err)
 		}
 		all = append(all, epics...)
+
+		standalone, err := r.deps.Fetcher.FetchStandaloneIssues(project, childKeys(epics))
+		if err != nil {
+			return nil, fmt.Errorf("pipeline: team %q: standalone: %w", team.Name, err)
+		}
+		all = append(all, standalone...)
 	}
 	return all, nil
+}
+
+// childKeys builds a set of all child issue keys across a set of epics, so
+// standalone issue fetching can exclude them.
+func childKeys(epics []ingest.RawEpic) map[string]bool {
+	keys := make(map[string]bool)
+	for _, e := range epics {
+		for _, issue := range e.Issues {
+			keys[issue.Key] = true
+		}
+	}
+	return keys
 }
 
 // enrich maps, scores advancement and computes progress for a single epic.

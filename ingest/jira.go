@@ -79,14 +79,7 @@ func NewJiraClient(cfg *config.Jira) (*JiraClient, error) {
 // start date set. The permissive filter keeps roadsnap's "current work" intent
 // while no longer silently dropping epics that simply lack a start date.
 func (jc *JiraClient) FetchEpics(project string) ([]RawEpic, error) {
-	jql := fmt.Sprintf(
-		`project = "%s" AND issuetype = Epic AND (`+
-			`%[2]s > startOfYear() OR `+
-			`updated > startOfYear() OR `+
-			`%[2]s IS EMPTY)`,
-		project, jc.startDateJQL,
-	)
-	raw, err := jc.search(jql)
+	raw, err := jc.searchActiveIssues(activeQuery{project: project, typeFilter: `issuetype = Epic`})
 	if err != nil {
 		return nil, fmt.Errorf("ingest: fetch epics for %s: %w", project, err)
 	}
@@ -103,6 +96,27 @@ func (jc *JiraClient) FetchEpics(project string) ([]RawEpic, error) {
 		epics = append(epics, re)
 	}
 	return epics, nil
+}
+
+// searchActiveIssues searches a project for issues matching typeFilter that are
+// in active scope this year: started, updated, or undated. Shared by FetchEpics
+// and FetchStandaloneIssues.
+func (jc *JiraClient) searchActiveIssues(q activeQuery) ([]searchItem, error) {
+	jql := fmt.Sprintf(
+		`project = "%s" AND %s AND (`+
+			`%[3]s > startOfYear() OR `+
+			`updated > startOfYear() OR `+
+			`%[3]s IS EMPTY)`,
+		q.project, q.typeFilter, jc.startDateJQL,
+	)
+	return jc.search(jql)
+}
+
+// activeQuery bundles the parameters for searchActiveIssues so the function
+// signature stays free of string arguments.
+type activeQuery struct {
+	project    string
+	typeFilter string
 }
 
 // FetchByKeys returns the live status of the given Jira issue keys, regardless
@@ -147,6 +161,27 @@ func ticketStatus(issue jira.Issue) domain.ProgressStatus {
 	default:
 		return domain.StatusToDo
 	}
+}
+
+// FetchStandaloneIssues returns non-epic issues in a project that are in
+// active scope this year and are not children of any epic. These are stories,
+// tasks, bugs etc. that exist outside any epic — common on boards where not all
+// work is organized under epics. excludeKeys is the set of issue keys already
+// fetched as epic children, so they are not duplicated.
+func (jc *JiraClient) FetchStandaloneIssues(project string, excludeKeys map[string]bool) ([]RawEpic, error) {
+	raw, err := jc.searchActiveIssues(activeQuery{project: project, typeFilter: `issuetype != Epic`})
+	if err != nil {
+		return nil, fmt.Errorf("ingest: fetch standalone issues for %s: %w", project, err)
+	}
+
+	issues := make([]RawEpic, 0, len(raw))
+	for _, item := range raw {
+		if excludeKeys[item.issue.Key] {
+			continue
+		}
+		issues = append(issues, jc.rawEpicFromItem(item))
+	}
+	return issues, nil
 }
 
 // rawEpicFromItem builds a RawEpic (without child issues) from a search item.
@@ -229,24 +264,39 @@ type searchItem struct {
 func (jc *JiraClient) search(jql string) ([]searchItem, error) {
 	endpoint := "/rest/api/3/search/jql"
 
-	params := url.Values{}
-	params.Add("jql", jql)
-	params.Add("fields", "*all,-comment")
-	params.Add("expand", "changelog,names")
+	var allIssues []json.RawMessage
+	nextPageToken := ""
 
-	req, err := jc.client.NewRequest("GET", endpoint+"?"+params.Encode(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("ingest: build request: %w", err)
+	for {
+		params := url.Values{}
+		params.Add("jql", jql)
+		params.Add("fields", "*all,-comment")
+		params.Add("expand", "changelog,names")
+		if nextPageToken != "" {
+			params.Add("nextPageToken", nextPageToken)
+		}
+
+		req, err := jc.client.NewRequest("GET", endpoint+"?"+params.Encode(), nil)
+		if err != nil {
+			return nil, fmt.Errorf("ingest: build request: %w", err)
+		}
+
+		var response struct {
+			Issues        []json.RawMessage `json:"issues"`
+			NextPageToken string            `json:"nextPageToken"`
+		}
+		if _, err := jc.client.Do(req, &response); err != nil {
+			return nil, fmt.Errorf("ingest: execute jql %q: %w", jql, err)
+		}
+
+		allIssues = append(allIssues, response.Issues...)
+		if response.NextPageToken == "" {
+			break
+		}
+		nextPageToken = response.NextPageToken
 	}
 
-	var response struct {
-		Issues []json.RawMessage `json:"issues"`
-	}
-	if _, err := jc.client.Do(req, &response); err != nil {
-		return nil, fmt.Errorf("ingest: execute jql %q: %w", jql, err)
-	}
-
-	return decodeSearchItems(response.Issues)
+	return decodeSearchItems(allIssues)
 }
 
 func decodeSearchItems(rawIssues []json.RawMessage) ([]searchItem, error) {
