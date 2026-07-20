@@ -8,6 +8,7 @@ import (
 
 	"github.com/andygrunwald/go-jira"
 
+	"github.com/makarski/teamscope/align"
 	"github.com/makarski/teamscope/config"
 	"github.com/makarski/teamscope/domain"
 	"github.com/makarski/teamscope/ingest"
@@ -74,6 +75,17 @@ func (s stubAligner) Score(context.Context, *ingest.RawEpic, domain.Criterion) (
 		return domain.AdvUnscored, "", s.err
 	}
 	return domain.AdvAdvances, "on target", nil
+}
+
+func (s stubAligner) ScoreAll(_ context.Context, items []align.ScoreItem) ([]align.ScoreResult, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	results := make([]align.ScoreResult, len(items))
+	for i := range items {
+		results[i] = align.ScoreResult{Advances: domain.AdvAdvances, Note: "on target"}
+	}
+	return results, nil
 }
 
 type stubStore struct {

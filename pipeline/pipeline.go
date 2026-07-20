@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/andygrunwald/go-jira"
+	"github.com/makarski/teamscope/align"
 	"github.com/makarski/teamscope/config"
 	"github.com/makarski/teamscope/domain"
 	"github.com/makarski/teamscope/ingest"
@@ -41,6 +42,7 @@ type Classifier interface {
 // advancement scoring.
 type Aligner interface {
 	Score(ctx context.Context, epic *ingest.RawEpic, criterion domain.Criterion) (domain.Advancement, string, error)
+	ScoreAll(ctx context.Context, items []align.ScoreItem) ([]align.ScoreResult, error)
 }
 
 // Store persists snapshots.
@@ -122,9 +124,13 @@ func (r *Runner) Run(ctx context.Context, team config.Team) (int64, error) {
 	}
 	refs := rc.classifier.ClassifyAll(ctx, epicPtrs)
 
+	// Batch score advancement for all epics that mapped to a criterion.
+	scoreResults := r.batchScore(ctx, epics, refs, rc.rubric)
+
 	classified := make([]domain.ClassifiedEpic, 0, len(epics))
 	for i := range epics {
-		classified = append(classified, r.enrichWithRef(ctx, &epics[i], refs[i], rc))
+		ref := applyScore(refs[i], scoreResults[i], rc.rubric)
+		classified = append(classified, r.enrichWithRef(ctx, &epics[i], ref, rc))
 	}
 	slog.Info("enriched epics", "team", team.Name, "count", len(classified))
 
@@ -189,21 +195,90 @@ func childKeys(epics []ingest.RawEpic) map[string]bool {
 	return keys
 }
 
+// batchScore collects all epics that mapped to a criterion and scores them
+// in a single batched AI call. Returns results indexed by epic position.
+func (r *Runner) batchScore(ctx context.Context, epics []ingest.RawEpic, refs []domain.CriterionRef, rubric domain.Rubric) []align.ScoreResult {
+	results := make([]align.ScoreResult, len(epics))
+	for i := range results {
+		results[i] = align.ScoreResult{Advances: domain.AdvUnscored}
+	}
+	if r.deps.Aligner == nil {
+		return results
+	}
+
+	items, indices := collectScoreItems(epics, refs, rubric)
+	if len(items) == 0 {
+		return results
+	}
+
+	scored, err := r.deps.Aligner.ScoreAll(ctx, items)
+	if err != nil {
+		return results
+	}
+	for i, idx := range indices {
+		if i < len(scored) {
+			results[idx] = scored[i]
+		}
+	}
+	return results
+}
+
+func collectScoreItems(epics []ingest.RawEpic, refs []domain.CriterionRef, rubric domain.Rubric) ([]align.ScoreItem, []int) {
+	var items []align.ScoreItem
+	var indices []int
+	for i, ref := range refs {
+		c, ok := rubric.Find(ref.Key)
+		if !ok {
+			continue
+		}
+		items = append(items, align.ScoreItem{Epic: &epics[i], Criterion: c})
+		indices = append(indices, i)
+	}
+	return items, indices
+}
+
 // enrich maps, scores advancement and computes progress for a single epic.
 func (r *Runner) enrich(ctx context.Context, epic *ingest.RawEpic, rc runContext) domain.ClassifiedEpic {
 	ref := rc.classifier.Classify(ctx, epic)
-	return r.enrichWithRef(ctx, epic, ref, rc)
+	status, progress := ingest.ProgressOf(epic, r.deps.StatusNames, rc.now)
+
+	lens := domain.LensNone
+	var advances domain.Advancement
+	var note string
+	if c, ok := rc.rubric.Find(ref.Key); ok {
+		lens = c.Lens
+		advances, note = r.scoreAdvancement(ctx, epic, c)
+	}
+
+	return domain.ClassifiedEpic{
+		Key:       epic.Epic.Key,
+		Summary:   epic.Epic.Fields.Summary,
+		Criterion: domain.CriterionRef{Key: ref.Key, Advances: advances, Source: ref.Source, Note: note},
+		Lens:      lens,
+		Progress:  progress,
+		Status:    status,
+		Tickets:   epicTickets(epic, r.deps.StatusNames),
+	}
 }
 
-// enrichWithRef takes a pre-computed criterion ref (from batch classification)
-// and completes the enrichment: progress, lens, advancement scoring.
+// applyScore merges a score result into a criterion ref, setting the lens
+// when the ref maps to a rubric criterion.
+func applyScore(ref domain.CriterionRef, score align.ScoreResult, rubric domain.Rubric) domain.CriterionRef {
+	if _, ok := rubric.Find(ref.Key); ok {
+		ref.Advances = score.Advances
+		ref.Note = score.Note
+	}
+	return ref
+}
+
+// enrichWithRef takes a pre-computed criterion ref (with score already applied)
+// and completes the enrichment: progress, lens, tickets.
 func (r *Runner) enrichWithRef(ctx context.Context, epic *ingest.RawEpic, ref domain.CriterionRef, rc runContext) domain.ClassifiedEpic {
 	status, progress := ingest.ProgressOf(epic, r.deps.StatusNames, rc.now)
 
 	lens := domain.LensNone
 	if c, ok := rc.rubric.Find(ref.Key); ok {
 		lens = c.Lens
-		ref.Advances, ref.Note = r.scoreAdvancement(ctx, epic, c)
 	}
 
 	return domain.ClassifiedEpic{

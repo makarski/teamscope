@@ -109,12 +109,12 @@ func (jc *JiraClient) FetchEpics(project string) ([]RawEpic, error) {
 }
 
 // searchActiveIssues searches a project for issues matching typeFilter that
-// represent current active work: open or recently updated (last 30 days).
-// Shared by FetchEpics and FetchStandaloneIssues.
+// have been updated in the last 30 days. This captures current active work
+// (in progress, recently completed, recently created) without pulling the
+// entire backlog history. Shared by FetchEpics and FetchStandaloneIssues.
 func (jc *JiraClient) searchActiveIssues(q activeQuery) ([]searchItem, error) {
 	jql := fmt.Sprintf(
-		`project = "%s" AND %s AND (`+
-			`statusCategory != Done OR updated > startOfDay(-30))`,
+		`project = "%s" AND %s AND updated > startOfDay(-30)`,
 		q.project, q.typeFilter,
 	)
 	return jc.search(jql)
