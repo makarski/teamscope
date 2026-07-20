@@ -108,16 +108,14 @@ func (jc *JiraClient) FetchEpics(project string) ([]RawEpic, error) {
 	return epics, nil
 }
 
-// searchActiveIssues searches a project for issues matching typeFilter that are
-// in active scope this year: started, updated, or undated. Shared by FetchEpics
-// and FetchStandaloneIssues.
+// searchActiveIssues searches a project for issues matching typeFilter that
+// represent current active work: open or recently updated (last 30 days).
+// Shared by FetchEpics and FetchStandaloneIssues.
 func (jc *JiraClient) searchActiveIssues(q activeQuery) ([]searchItem, error) {
 	jql := fmt.Sprintf(
 		`project = "%s" AND %s AND (`+
-			`%[3]s > startOfYear() OR `+
-			`updated > startOfYear() OR `+
-			`%[3]s IS EMPTY)`,
-		q.project, q.typeFilter, jc.startDateJQL,
+			`statusCategory != Done OR updated > startOfDay(-30))`,
+		q.project, q.typeFilter,
 	)
 	return jc.search(jql)
 }
