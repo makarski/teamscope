@@ -15,6 +15,12 @@ import (
 
 const alignMaxTokens = 128
 
+// batchScoreMaxTokens caps the batch advancement reply.
+const batchScoreMaxTokens = 4096
+
+// batchScoreChunkSize limits how many epics go into a single AI prompt.
+const batchScoreChunkSize = 50
+
 // Scorer judges whether an epic advances a given criterion.
 type Scorer struct {
 	client *anthropic.Client
@@ -49,6 +55,48 @@ func (s *Scorer) Score(ctx context.Context, epic *ingest.RawEpic, criterion doma
 	return advancementOf(*reply.Advances), strings.TrimSpace(reply.Note), nil
 }
 
+// ScoreItem pairs an epic with the criterion it was mapped to.
+type ScoreItem struct {
+	Epic      *ingest.RawEpic
+	Criterion domain.Criterion
+}
+
+// ScoreResult is the outcome for one epic.
+type ScoreResult struct {
+	Advances domain.Advancement
+	Note     string
+}
+
+// ScoreAll scores a batch of epic/criterion pairs in chunked AI calls.
+// Returns results indexed by input position.
+func (s *Scorer) ScoreAll(ctx context.Context, items []ScoreItem) ([]ScoreResult, error) {
+	results := make([]ScoreResult, len(items))
+	for i := range results {
+		results[i] = ScoreResult{Advances: domain.AdvUnscored}
+	}
+
+	for start := 0; start < len(items); start += batchScoreChunkSize {
+		end := start + batchScoreChunkSize
+		if end > len(items) {
+			end = len(items)
+		}
+		batch := items[start:end]
+		if err := s.scoreBatch(ctx, batch, results, start); err != nil {
+			return nil, err
+		}
+	}
+	return results, nil
+}
+
+func (s *Scorer) scoreBatch(ctx context.Context, batch []ScoreItem, results []ScoreResult, offset int) error {
+	prompt := s.buildBatchPrompt(batch)
+	raw, err := s.client.Complete(ctx, prompt, batchScoreMaxTokens)
+	if err != nil {
+		return err
+	}
+	return decodeBatchScore(raw, batch, results, offset)
+}
+
 func advancementOf(advances bool) domain.Advancement {
 	if advances {
 		return domain.AdvAdvances
@@ -66,6 +114,46 @@ func (s *Scorer) buildPrompt(epic *ingest.RawEpic, criterion domain.Criterion) s
 	)
 }
 
+// buildBatchPrompt asks the AI to score multiple epic/criterion pairs in one call.
+func (s *Scorer) buildBatchPrompt(items []ScoreItem) string {
+	var b strings.Builder
+	b.WriteString("For each work item, judge whether it meaningfully advances the stated goal.\n\n")
+	for i, item := range items {
+		fmt.Fprintf(&b, "%d. Goal: %s: %s\n   Work item: %s\n\n", i, item.Criterion.Key, item.Criterion.Title, item.Epic.Text())
+	}
+	b.WriteString(`Reply with JSON only: {"results":[{"index":0,"advances":true|false,"note":"<max 12 words>"},...]}.`)
+	return b.String()
+}
+
+type batchScoreReply struct {
+	Results []struct {
+		Index    int    `json:"index"`
+		Advances *bool  `json:"advances"`
+		Note     string `json:"note"`
+	} `json:"results"`
+}
+
+func decodeBatchScore(raw string, batch []ScoreItem, results []ScoreResult, offset int) error {
+	var parsed batchScoreReply
+	jsonStr := extractJSON(raw)
+	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
+		return fmt.Errorf("align: decode batch reply: %w", err)
+	}
+	for _, r := range parsed.Results {
+		if r.Index < 0 || r.Index >= len(batch) {
+			continue
+		}
+		if r.Advances == nil {
+			continue
+		}
+		results[offset+r.Index] = ScoreResult{
+			Advances: advancementOf(*r.Advances),
+			Note:     strings.TrimSpace(r.Note),
+		}
+	}
+	return nil
+}
+
 func parseReply(raw string) (scoreReply, error) {
 	jsonPart := extractJSON(raw)
 	var reply scoreReply
@@ -73,7 +161,7 @@ func parseReply(raw string) (scoreReply, error) {
 		return scoreReply{}, fmt.Errorf("align: decode reply %q: %w", raw, err)
 	}
 	if reply.Advances == nil {
-		return scoreReply{}, fmt.Errorf("align: reply %q missing \"advances\" field", raw)
+		return scoreReply{}, fmt.Errorf("align: reply %q missing advances field", truncateReply(raw))
 	}
 	return reply, nil
 }
@@ -91,4 +179,14 @@ func extractJSON(raw string) string {
 
 func validJSONBounds(start, end int) bool {
 	return start != -1 && end != -1 && end >= start
+}
+
+// truncateReply shortens a raw reply for safe inclusion in error messages.
+const maxReplyInError = 200
+
+func truncateReply(reply string) string {
+	if len(reply) <= maxReplyInError {
+		return reply
+	}
+	return reply[:maxReplyInError] + "…"
 }

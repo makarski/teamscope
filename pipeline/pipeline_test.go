@@ -8,6 +8,7 @@ import (
 
 	"github.com/andygrunwald/go-jira"
 
+	"github.com/makarski/teamscope/align"
 	"github.com/makarski/teamscope/config"
 	"github.com/makarski/teamscope/domain"
 	"github.com/makarski/teamscope/ingest"
@@ -53,6 +54,14 @@ func (stubClassifier) Classify(context.Context, *ingest.RawEpic) domain.Criterio
 	return domain.CriterionRef{Key: "business", Source: domain.SourceLabel}
 }
 
+func (stubClassifier) ClassifyAll(_ context.Context, epics []*ingest.RawEpic) []domain.CriterionRef {
+	refs := make([]domain.CriterionRef, len(epics))
+	for i := range epics {
+		refs[i] = domain.CriterionRef{Key: "business", Source: domain.SourceLabel}
+	}
+	return refs
+}
+
 type stubFactory struct{}
 
 func (stubFactory) For(domain.Rubric) Classifier { return stubClassifier{} }
@@ -66,6 +75,17 @@ func (s stubAligner) Score(context.Context, *ingest.RawEpic, domain.Criterion) (
 		return domain.AdvUnscored, "", s.err
 	}
 	return domain.AdvAdvances, "on target", nil
+}
+
+func (s stubAligner) ScoreAll(_ context.Context, items []align.ScoreItem) ([]align.ScoreResult, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	results := make([]align.ScoreResult, len(items))
+	for i := range items {
+		results[i] = align.ScoreResult{Advances: domain.AdvAdvances, Note: "on target"}
+	}
+	return results, nil
 }
 
 type stubStore struct {

@@ -146,6 +146,18 @@ func (s *stubAI) Map(context.Context, *ingest.RawEpic, domain.Rubric) (string, e
 	return s.result, s.err
 }
 
+func (s *stubAI) MapAll(_ context.Context, epics []*ingest.RawEpic, _ domain.Rubric) (map[int]string, error) {
+	s.called = true
+	if s.err != nil {
+		return nil, s.err
+	}
+	out := make(map[int]string, len(epics))
+	for i := range epics {
+		out[i] = s.result
+	}
+	return out, nil
+}
+
 func classifierFor(ai AIMapper) *Classifier {
 	return NewFactory(ai, workHints).For(workRubric)
 }
