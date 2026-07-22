@@ -13,6 +13,7 @@ import (
 	"github.com/makarski/teamscope/align"
 	"github.com/makarski/teamscope/config"
 	"github.com/makarski/teamscope/domain"
+	"github.com/makarski/teamscope/github"
 	"github.com/makarski/teamscope/ingest"
 )
 
@@ -50,6 +51,12 @@ type Store interface {
 	Save(ctx context.Context, snap domain.Snapshot) (int64, error)
 }
 
+// GitHubFetcher fetches contribution activity for a team's repos. May be nil
+// to skip the activity signal.
+type GitHubFetcher interface {
+	FetchActivity(ctx context.Context, repos []string, since time.Time) (map[string]domain.Activity, error)
+}
+
 // TicketFetcher fetches live Jira ticket status by key, for drift checking.
 // May be nil to skip drift.
 type TicketFetcher interface {
@@ -74,8 +81,8 @@ type Runner struct {
 	now  func() time.Time
 }
 
-// Deps bundles the pipeline collaborators. aligner, drift, and narrator may
-// be nil to skip those stages.
+// Deps bundles the pipeline collaborators. aligner, drift, github, and
+// narrator may be nil to skip those stages.
 type Deps struct {
 	Fetcher     Fetcher
 	Sources     map[string]RubricSource // keyed by team name
@@ -87,6 +94,7 @@ type Deps struct {
 	Drift       DriftChecker
 	DriftTexts  func(team string, epics []ingest.RawEpic) []string
 	Narrator    Narrator
+	GitHub      GitHubFetcher
 }
 
 // NewRunner wires the pipeline collaborators from Deps.
@@ -140,6 +148,8 @@ func (r *Runner) Run(ctx context.Context, team config.Team) (int64, error) {
 		classified = append(classified, r.enrichWithRef(ctx, &epics[i], ref, rc))
 	}
 	slog.Info("enriched epics", "team", team.Name, "count", len(classified))
+
+	classified = r.enrichActivity(ctx, team, classified)
 
 	states := r.computeDrift(ctx, rubric, team, epics)
 	slog.Info("computed drift", "team", team.Name, "states", len(states))
@@ -416,4 +426,33 @@ func (r *Runner) generateNarrative(ctx context.Context, snap domain.Snapshot) st
 		return ""
 	}
 	return brief
+}
+
+// fetchGitHubActivity fetches contribution counts for the team's repos in the
+// last 90 days and returns the aggregate. The activity is distributed evenly
+// across all epics as a team-level signal.
+func (r *Runner) fetchGitHubActivity(ctx context.Context, team config.Team, epics []domain.ClassifiedEpic) domain.Activity {
+	since := r.now().AddDate(0, 0, -90)
+	activities, err := r.deps.GitHub.FetchActivity(ctx, team.GitHubRepos, since)
+	if err != nil {
+		slog.Warn("github activity fetch failed", "team", team.Name, "err", err)
+		return domain.Activity{}
+	}
+	return github.AggregateActivity(activities)
+}
+
+// enrichActivity fetches GitHub activity for the team's repos and distributes
+// it across all epics as a team-level signal. No-op when GitHub is not
+// configured or the team has no repos.
+func (r *Runner) enrichActivity(ctx context.Context, team config.Team, epics []domain.ClassifiedEpic) []domain.ClassifiedEpic {
+	if r.deps.GitHub == nil || len(team.GitHubRepos) == 0 {
+		return epics
+	}
+	activity := r.fetchGitHubActivity(ctx, team, epics)
+	for i := range epics {
+		epics[i].Activity = activity
+	}
+	slog.Info("fetched github activity", "team", team.Name, "repos", len(team.GitHubRepos),
+		"prs", activity.PullRequests, "commits", activity.Commits)
+	return epics
 }

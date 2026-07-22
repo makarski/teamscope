@@ -11,19 +11,21 @@ import (
 
 // TeamView is the display model for a single team's latest snapshot.
 type TeamView struct {
-	Team         string
-	Rubric       string
-	TakenAt      string
-	EpicCount    int
-	Coverage     []CriterionCoverage
-	Lenses       []LensShare
-	Drift        []CriterionCoverage // criteria with no active epic advancing them
-	Unmapped     []EpicView          // epics that mapped to no criterion
-	OffTrack     []EpicView          // overdue epics needing attention
-	Epics        []EpicView
-	BlockerFocus int // % of active epics working an open criterion
-	States       []PillarStateView
-	Narrative    string
+	Team          string
+	Rubric        string
+	TakenAt       string
+	EpicCount     int
+	Coverage      []CriterionCoverage
+	Lenses        []LensShare
+	Drift         []CriterionCoverage // criteria with no active epic advancing them
+	Unmapped      []EpicView          // epics that mapped to no criterion
+	OffTrack      []EpicView          // overdue epics needing attention
+	Epics         []EpicView
+	BlockerFocus  int // % of active epics working an open criterion
+	States        []PillarStateView
+	Narrative     string
+	GitHubPRs     int
+	GitHubCommits int
 }
 
 // PillarStateView is the display model for a criterion's drift state.
@@ -87,19 +89,21 @@ func NewTeamView(snap domain.Snapshot) TeamView {
 	coverage := criterionCoverage(snap)
 
 	return TeamView{
-		Team:         snap.Team,
-		Rubric:       snap.Rubric.Name,
-		TakenAt:      snap.TakenAt.Format(timeDisplayLayout),
-		EpicCount:    len(snap.Epics),
-		Coverage:     coverage,
-		Lenses:       lensShares(snap.Epics),
-		Drift:        driftCriteria(coverage),
-		Unmapped:     filterUnmapped(epics),
-		OffTrack:     filterOffTrack(epics),
-		Epics:        epics,
-		BlockerFocus: blockerFocus(snap),
-		States:       pillarStates(snap.States, coverage),
-		Narrative:    snap.Narrative,
+		Team:          snap.Team,
+		Rubric:        snap.Rubric.Name,
+		TakenAt:       snap.TakenAt.Format(timeDisplayLayout),
+		EpicCount:     len(snap.Epics),
+		Coverage:      coverage,
+		Lenses:        lensShares(snap.Epics),
+		Drift:         driftCriteria(coverage),
+		Unmapped:      filterUnmapped(epics),
+		OffTrack:      filterOffTrack(epics),
+		Epics:         epics,
+		BlockerFocus:  blockerFocus(snap),
+		States:        pillarStates(snap.States, coverage),
+		Narrative:     snap.Narrative,
+		GitHubPRs:     teamPRs(snap.Epics),
+		GitHubCommits: teamCommits(snap.Epics),
 	}
 }
 
@@ -274,4 +278,22 @@ func pct(n, total int) int {
 		return 0
 	}
 	return int(math.Round(float64(n) / float64(total) * 100))
+}
+
+// teamPRs sums GitHub PRs across all epics.
+func teamPRs(epics []domain.ClassifiedEpic) int {
+	total := 0
+	for _, e := range epics {
+		total += e.Activity.PullRequests
+	}
+	return total
+}
+
+// teamCommits sums GitHub commits across all epics.
+func teamCommits(epics []domain.ClassifiedEpic) int {
+	total := 0
+	for _, e := range epics {
+		total += e.Activity.Commits
+	}
+	return total
 }

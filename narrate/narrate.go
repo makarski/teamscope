@@ -87,7 +87,22 @@ func briefPrompt(snap domain.Snapshot) string {
 		b.WriteString(epicLine(e))
 	}
 
+	// Include GitHub activity if available.
+	totalPRs, totalCommits := teamActivity(snap.Epics)
+	if totalPRs > 0 || totalCommits > 0 {
+		b.WriteString(fmt.Sprintf("\nGitHub activity (last 90 days): %d PRs, %d commits\n", totalPRs, totalCommits))
+	}
+
 	return b.String()
+}
+
+// teamActivity sums GitHub activity across all epics.
+func teamActivity(epics []domain.ClassifiedEpic) (prs, commits int) {
+	for _, e := range epics {
+		prs += e.Activity.PullRequests
+		commits += e.Activity.Commits
+	}
+	return prs, commits
 }
 
 // unmappedEpicLines formats up to 10 unmapped epics for the narrative prompt.
