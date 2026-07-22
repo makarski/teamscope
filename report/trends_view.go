@@ -40,7 +40,7 @@ func NewTeamTrend(team string, points []domain.TrendPoint) TeamTrend {
 }
 
 // MaxEpics returns the highest epic count across all points, for scaling the
-// sparkline. Returns 1 if empty to avoid division by zero.
+// chart. Returns 1 if empty to avoid division by zero.
 func (t TeamTrend) MaxEpics() int {
 	max := 1
 	for _, p := range t.Points {
