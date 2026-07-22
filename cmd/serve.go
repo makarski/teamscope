@@ -31,11 +31,15 @@ func runServe(ctx context.Context, configPath string, args []string) error {
 	if err != nil {
 		return err
 	}
+	trendRenderer, err := report.NewTrendRenderer(d.store, d.cfg.Jira.BaseURL)
+	if err != nil {
+		return err
+	}
 
 	if *out != "" {
 		return writeStatic(ctx, renderer, *out)
 	}
-	return serveHTTP(renderer, *addr)
+	return serveHTTP(renderer, trendRenderer, *addr)
 }
 
 func writeStatic(ctx context.Context, renderer *report.WebRenderer, path string) error {
@@ -52,11 +56,21 @@ func writeStatic(ctx context.Context, renderer *report.WebRenderer, path string)
 	return nil
 }
 
-func serveHTTP(renderer *report.WebRenderer, addr string) error {
+func serveHTTP(renderer *report.WebRenderer, trendRenderer *report.TrendRenderer, addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := renderer.Render(r.Context(), w); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	})
+	mux.HandleFunc("/trends", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := trendRenderer.Render(r.Context(), w); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})

@@ -132,4 +132,9 @@ tr:hover td { background: var(--surface-hover); }
 /* Empty state */
 .empty { text-align: center; padding: 3rem; color: var(--text-dim); }
 .empty code { background: var(--surface); padding: .2rem .4rem; border-radius: 4px; font-size: .85rem; }
+
+.nav-tabs { display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+.nav-tabs a { padding: .6rem 1.2rem; text-decoration: none; color: var(--text-dim); font-size: .9rem; font-weight: 600; border-bottom: 2px solid transparent; }
+.nav-tabs a:hover { color: var(--text); }
+.nav-tabs a.active { color: var(--accent); border-bottom-color: var(--accent); }
 `

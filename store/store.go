@@ -439,6 +439,56 @@ func (s *Store) Teams(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
+// TrendMetrics returns up to n historical trend points for a team, oldest
+// first. Each point carries aggregate metrics computed from stored data
+// without loading full epic details.
+func (s *Store) TrendMetrics(ctx context.Context, team string, n int) ([]domain.TrendPoint, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT s.id, s.taken_at,
+		        COUNT(e.id) AS epic_count,
+		        SUM(CASE WHEN e.criterion_key != '' THEN 1 ELSE 0 END) AS mapped,
+		        SUM(CASE WHEN e.criterion_key = '' THEN 1 ELSE 0 END) AS unmapped,
+		        SUM(CASE WHEN cs.drift != '' AND cs.drift != 'none' THEN 1 ELSE 0 END) AS drift_count
+		 FROM snapshots s
+		 LEFT JOIN epics e ON e.snapshot_id = s.id
+		 LEFT JOIN criterion_states cs ON cs.snapshot_id = s.id
+		 WHERE s.team = ?
+		 GROUP BY s.id
+		 ORDER BY s.taken_at DESC
+		 LIMIT ?`, team, n)
+	if err != nil {
+		return nil, fmt.Errorf("store: query trend metrics: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.TrendPoint
+	for rows.Next() {
+		var (
+			point   domain.TrendPoint
+			takenAt string
+			mapped  int
+		)
+		if err := rows.Scan(&point.SnapshotID, &takenAt, &point.EpicCount, &mapped, &point.UnmappedCount, &point.DriftCount); err != nil {
+			return nil, fmt.Errorf("store: scan trend point: %w", err)
+		}
+		t, err := time.Parse(timeLayout, takenAt)
+		if err != nil {
+			return nil, fmt.Errorf("store: parse trend taken_at %q: %w", takenAt, err)
+		}
+		point.TakenAt = t
+		point.BlockerFocus = pctInt(mapped, point.EpicCount)
+		out = append(out, point)
+	}
+	return out, rows.Err()
+}
+
+func pctInt(n, total int) int {
+	if total == 0 {
+		return 0
+	}
+	return int(float64(n) / float64(total) * 100)
+}
+
 // scanner unifies *sql.Row and *sql.Rows for meta scanning.
 type scanner interface {
 	Scan(dest ...any) error

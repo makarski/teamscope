@@ -93,6 +93,11 @@ const dashboardTemplate = `<!DOCTYPE html>
     <span class="meta">goal alignment &middot; drift &middot; focus</span>
   </div>
 
+  <nav class="nav-tabs">
+    <a href="/" class="active">Current</a>
+    <a href="/trends">Trends</a>
+  </nav>
+
 {{if not .Teams}}
   <div class="empty">No snapshots yet. Run <code>teamscope snapshot</code>.</div>
 {{end}}
