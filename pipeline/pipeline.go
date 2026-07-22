@@ -13,7 +13,6 @@ import (
 	"github.com/makarski/teamscope/align"
 	"github.com/makarski/teamscope/config"
 	"github.com/makarski/teamscope/domain"
-	"github.com/makarski/teamscope/github"
 	"github.com/makarski/teamscope/ingest"
 )
 
@@ -54,7 +53,7 @@ type Store interface {
 // GitHubFetcher fetches contribution activity for a team's repos. May be nil
 // to skip the activity signal.
 type GitHubFetcher interface {
-	FetchActivity(ctx context.Context, repos []string, since time.Time) (map[string]domain.Activity, error)
+	FetchAttributedActivity(ctx context.Context, repos []string, since time.Time) (map[string]domain.Activity, error)
 }
 
 // TicketFetcher fetches live Jira ticket status by key, for drift checking.
@@ -429,30 +428,36 @@ func (r *Runner) generateNarrative(ctx context.Context, snap domain.Snapshot) st
 }
 
 // fetchGitHubActivity fetches contribution counts for the team's repos in the
-// last 90 days and returns the aggregate. The activity is distributed evenly
-// across all epics as a team-level signal.
-func (r *Runner) fetchGitHubActivity(ctx context.Context, team config.Team, epics []domain.ClassifiedEpic) domain.Activity {
+// last 90 days, attributed to individual epics by key matching in PR titles
+// and commit messages. Returns a map of epic key → Activity.
+func (r *Runner) fetchGitHubActivity(ctx context.Context, team config.Team) map[string]domain.Activity {
 	since := r.now().AddDate(0, 0, -90)
-	activities, err := r.deps.GitHub.FetchActivity(ctx, team.GitHubRepos, since)
+	attributed, err := r.deps.GitHub.FetchAttributedActivity(ctx, team.GitHubRepos, since)
 	if err != nil {
 		slog.Warn("github activity fetch failed", "team", team.Name, "err", err)
-		return domain.Activity{}
+		return nil
 	}
-	return github.AggregateActivity(activities)
+	return attributed
 }
 
-// enrichActivity fetches GitHub activity for the team's repos and distributes
-// it across all epics as a team-level signal. No-op when GitHub is not
-// configured or the team has no repos.
+// enrichActivity fetches GitHub activity for the team's repos and attributes
+// it to individual epics by key matching. Epics without matching GitHub
+// activity get zero activity. No-op when GitHub is not configured or the team
+// has no repos.
 func (r *Runner) enrichActivity(ctx context.Context, team config.Team, epics []domain.ClassifiedEpic) []domain.ClassifiedEpic {
 	if r.deps.GitHub == nil || len(team.GitHubRepos) == 0 {
 		return epics
 	}
-	activity := r.fetchGitHubActivity(ctx, team, epics)
+	attributed := r.fetchGitHubActivity(ctx, team)
+	totalPRs, totalCommits := 0, 0
 	for i := range epics {
-		epics[i].Activity = activity
+		if a, ok := attributed[epics[i].Key]; ok {
+			epics[i].Activity = a
+			totalPRs += a.PullRequests
+			totalCommits += a.Commits
+		}
 	}
 	slog.Info("fetched github activity", "team", team.Name, "repos", len(team.GitHubRepos),
-		"prs", activity.PullRequests, "commits", activity.Commits)
+		"prs", totalPRs, "commits", totalCommits, "attributed", len(attributed))
 	return epics
 }

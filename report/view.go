@@ -39,6 +39,8 @@ type PillarStateView struct {
 	Tickets   []TicketView
 	Advancing int // epics that advance this criterion
 	Total     int // epics mapped to this criterion
+	PRs       int // GitHub PRs attributed to this criterion's epics
+	Commits   int // GitHub commits attributed to this criterion's epics
 }
 
 // TicketView is a Jira ticket with its live status. Used for both pillar
@@ -58,6 +60,8 @@ type CriterionCoverage struct {
 	Advancing int // epics that advance this criterion
 	Total     int // epics mapped to this criterion
 	Share     int // % of all epics mapped here
+	PRs       int // GitHub PRs attributed to this criterion's epics
+	Commits   int // GitHub commits attributed to this criterion's epics
 }
 
 // LensShare is the share of epics viewed through one lens.
@@ -108,7 +112,8 @@ func NewTeamView(snap domain.Snapshot) TeamView {
 }
 
 // pillarStates converts domain CriterionStates to display views, enriching
-// them with coverage data (advancing/total epics) from the criterion coverage.
+// them with coverage data (advancing/total epics) and GitHub activity from
+// the criterion coverage.
 func pillarStates(states []domain.CriterionState, coverage []CriterionCoverage) []PillarStateView {
 	covByKey := map[string]CriterionCoverage{}
 	for _, c := range coverage {
@@ -135,6 +140,8 @@ func pillarStates(states []domain.CriterionState, coverage []CriterionCoverage) 
 			Tickets:   tickets,
 			Advancing: cov.Advancing,
 			Total:     cov.Total,
+			PRs:       cov.PRs,
+			Commits:   cov.Commits,
 		})
 	}
 	return views
@@ -158,6 +165,8 @@ func criterionCoverage(snap domain.Snapshot) []CriterionCoverage {
 			continue // unmapped or stale key; surfaced separately
 		}
 		cov.Total++
+		cov.PRs += e.Activity.PullRequests
+		cov.Commits += e.Activity.Commits
 		if e.Criterion.Advances == domain.AdvAdvances {
 			cov.Advancing++
 		}
@@ -280,25 +289,20 @@ func pct(n, total int) int {
 	return int(math.Round(float64(n) / float64(total) * 100))
 }
 
-// teamPRs returns the GitHub PR count for the team. Since activity is a
-// team-level signal stored on every epic, we take the first non-zero value
-// rather than summing (which would multiply by epic count).
+// teamPRs sums GitHub PRs across all epics.
 func teamPRs(epics []domain.ClassifiedEpic) int {
+	total := 0
 	for _, e := range epics {
-		if e.Activity.PullRequests > 0 {
-			return e.Activity.PullRequests
-		}
+		total += e.Activity.PullRequests
 	}
-	return 0
+	return total
 }
 
-// teamCommits returns the GitHub commit count for the team. Same logic as
-// teamPRs — take the first non-zero value, not a sum.
+// teamCommits sums GitHub commits across all epics.
 func teamCommits(epics []domain.ClassifiedEpic) int {
+	total := 0
 	for _, e := range epics {
-		if e.Activity.Commits > 0 {
-			return e.Activity.Commits
-		}
+		total += e.Activity.Commits
 	}
-	return 0
+	return total
 }

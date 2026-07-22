@@ -79,6 +79,8 @@ func briefPrompt(snap domain.Snapshot) string {
 		}
 	}
 
+	b.WriteString(activitySection(snap))
+
 	b.WriteString("\nUnmapped epics (work serving no declared goal):\n")
 	b.WriteString(unmappedEpicLines(snap.Epics))
 
@@ -87,25 +89,59 @@ func briefPrompt(snap domain.Snapshot) string {
 		b.WriteString(epicLine(e))
 	}
 
-	// Include GitHub activity if available.
-	totalPRs, totalCommits := teamActivity(snap.Epics)
-	if totalPRs > 0 || totalCommits > 0 {
-		b.WriteString(fmt.Sprintf("\nGitHub activity (last 90 days): %d PRs, %d commits\n", totalPRs, totalCommits))
+	// Include GitHub PR activity if available.
+	totalPRs, _ := teamActivity(snap.Epics)
+	if totalPRs > 0 {
+		b.WriteString(fmt.Sprintf("\nGitHub PR activity (last 90 days): %d merged PRs\n", totalPRs))
 	}
 
 	return b.String()
 }
 
-// teamActivity returns the GitHub activity for the team. Since activity is a
-// team-level signal stored on every epic, we take the first non-zero value
-// rather than summing (which would multiply by epic count).
+// teamActivity returns the GitHub activity for the team. Since activity is
+// attributed per-epic, we sum across all epics.
 func teamActivity(epics []domain.ClassifiedEpic) (prs, commits int) {
 	for _, e := range epics {
-		if e.Activity.PullRequests > 0 || e.Activity.Commits > 0 {
-			return e.Activity.PullRequests, e.Activity.Commits
-		}
+		prs += e.Activity.PullRequests
+		commits += e.Activity.Commits
 	}
-	return 0, 0
+	return prs, commits
+}
+
+// activityByCriterion sums GitHub activity per criterion key.
+func activityByCriterion(snap domain.Snapshot) map[string]domain.Activity {
+	out := make(map[string]domain.Activity)
+	for _, e := range snap.Epics {
+		if e.Criterion.Key == "" {
+			continue
+		}
+		a := out[e.Criterion.Key]
+		a.PullRequests += e.Activity.PullRequests
+		a.Commits += e.Activity.Commits
+		out[e.Criterion.Key] = a
+	}
+	return out
+}
+
+// activitySection formats the per-criterion GitHub PR activity for the prompt.
+func activitySection(snap domain.Snapshot) string {
+	critActivity := activityByCriterion(snap)
+	if len(critActivity) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nGitHub PR activity per criterion:\n")
+	for _, c := range snap.Rubric.Criteria {
+		a, ok := critActivity[c.Key]
+		if !ok {
+			continue
+		}
+		if a.PullRequests == 0 {
+			continue
+		}
+		b.WriteString(fmt.Sprintf("  - %s: %d PRs\n", c.Title, a.PullRequests))
+	}
+	return b.String()
 }
 
 // unmappedEpicLines formats up to 10 unmapped epics for the narrative prompt.

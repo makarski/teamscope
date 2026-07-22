@@ -43,11 +43,7 @@ func TestFetchActivity(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.Contains(r.URL.Path, "/search/issues") {
-			w.Write([]byte(`{"total_count": 5}`))
-			return
-		}
-		if strings.Contains(r.URL.Path, "/commits") {
-			w.Write([]byte(`[{"sha":"abc"},{"sha":"def"},{"sha":"ghi"}]`))
+			w.Write([]byte(`{"total_count": 2, "items": [{"number": 1, "title": "PT-1 Fix bug", "repository_url": "https://api.github.com/repos/owner/repo"}, {"number": 2, "title": "PT-2 Add feature", "repository_url": "https://api.github.com/repos/owner/repo"}]}`))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -67,11 +63,33 @@ func TestFetchActivity(t *testing.T) {
 	}
 
 	a := activities["owner/repo"]
-	if a.PullRequests != 5 {
-		t.Errorf("PRs = %d, want 5", a.PullRequests)
+	if a.PullRequests != 2 {
+		t.Errorf("PRs = %d, want 2", a.PullRequests)
 	}
-	if a.Commits != 3 {
-		t.Errorf("Commits = %d, want 3", a.Commits)
+
+	testAttributedActivity(t, client, since)
+}
+
+func testAttributedActivity(t *testing.T, client *Client, since time.Time) {
+	attributed, err := client.FetchAttributedActivity(context.Background(), []string{"owner/repo"}, since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attributed) != 2 {
+		t.Fatalf("attributed keys = %d, want 2: %v", len(attributed), attributed)
+	}
+	checkActivity(t, attributed, "PT-1", 1)
+	checkActivity(t, attributed, "PT-2", 1)
+}
+
+func checkActivity(t *testing.T, m map[string]domain.Activity, key string, prs int) {
+	a, ok := m[key]
+	if !ok {
+		t.Errorf("%s not in attributed map", key)
+		return
+	}
+	if a.PullRequests != prs {
+		t.Errorf("%s PRs = %d, want %d", key, a.PullRequests, prs)
 	}
 }
 

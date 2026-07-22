@@ -1,6 +1,11 @@
-// Package github fetches contribution signals (PRs and commits) from GitHub
-// repositories for a team. These are the secondary activity signal that
-// enriches the dashboard and PO narrative alongside Jira epics.
+// Package github fetches contribution signals from GitHub repositories for a
+// team. Merged PRs are attributed to Jira epics by matching the epic key
+// (e.g. PT-123) in the PR title.
+//
+// Only PRs are fetched (not commits) to stay within GitHub's search API rate
+// limit (30 requests/min for authenticated users). All repos for a team are
+// batched into a single search query, so each team costs 1-5 API calls
+// depending on PR volume.
 package github
 
 import (
@@ -9,6 +14,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -37,53 +43,73 @@ func NewClient(token string) *Client {
 	}
 }
 
-// RepoActivity holds the contribution counts for a single repository.
-type RepoActivity struct {
-	Owner   string
-	Name    string
-	PRs     int
-	Commits int
-}
-
 // Repo identifies a GitHub repository by owner and name.
 type Repo struct {
 	Owner string
 	Name  string
 }
 
-// FetchActivity fetches PR and commit counts for the given repositories in the
-// specified time window (since). Returns aggregated activity per repo.
-func (c *Client) FetchActivity(ctx context.Context, repos []string, since time.Time) (map[string]domain.Activity, error) {
-	if c == nil {
-		return nil, nil
-	}
-
-	activities := make(map[string]domain.Activity, len(repos))
-	for _, repo := range repos {
-		r, ok := parseRepo(repo)
-		if !ok {
-			continue
-		}
-
-		prs, err := c.fetchPRCount(ctx, r, since)
-		if err != nil {
-			return nil, fmt.Errorf("github: fetch PRs for %s: %w", repo, err)
-		}
-
-		commits, err := c.fetchCommitCount(ctx, r, since)
-		if err != nil {
-			return nil, fmt.Errorf("github: fetch commits for %s: %w", repo, err)
-		}
-
-		activities[repo] = domain.Activity{
-			PullRequests: prs,
-			Commits:      commits,
-		}
-	}
-	return activities, nil
+// PullRequest is a merged PR with its title for epic-key matching.
+type PullRequest struct {
+	Number int
+	Title  string
 }
 
-// AggregateActivity sums PR and commit counts across repos.
+// keyPattern matches Jira issue keys like MARIO-3730, TTTL-28, AP-123.
+var keyPattern = regexp.MustCompile(`[A-Z][A-Z0-9]+-\d+`)
+
+// FetchActivity fetches merged PRs for the given repositories in the specified
+// time window (since). Returns per-repo PR counts.
+func (c *Client) FetchActivity(ctx context.Context, repos []string, since time.Time) (map[string]domain.Activity, error) {
+	prsByRepo, err := c.fetchPRsBatched(ctx, repos, since)
+	if err != nil {
+		return nil, err
+	}
+	return prCountsByRepo(prsByRepo), nil
+}
+
+// FetchAttributedActivity fetches merged PRs, then attributes them to Jira
+// epic keys by matching keys in PR titles. Returns a map of epic key → Activity.
+func (c *Client) FetchAttributedActivity(ctx context.Context, repos []string, since time.Time) (map[string]domain.Activity, error) {
+	prsByRepo, err := c.fetchPRsBatched(ctx, repos, since)
+	if err != nil {
+		return nil, err
+	}
+	return attributeAllPRs(prsByRepo), nil
+}
+
+// prCountsByRepo converts PR lists to domain.Activity counts per repo.
+func prCountsByRepo(prsByRepo map[string][]PullRequest) map[string]domain.Activity {
+	out := make(map[string]domain.Activity, len(prsByRepo))
+	for repo, prs := range prsByRepo {
+		out[repo] = domain.Activity{PullRequests: len(prs)}
+	}
+	return out
+}
+
+// attributeAllPRs attributes PRs from all repos to epic keys.
+func attributeAllPRs(prsByRepo map[string][]PullRequest) map[string]domain.Activity {
+	attributed := make(map[string]domain.Activity)
+	for _, prs := range prsByRepo {
+		attributePRs(attributed, prs)
+	}
+	return attributed
+}
+
+// attributePRs maps PRs to epic keys by matching keys in titles.
+func attributePRs(attributed map[string]domain.Activity, prs []PullRequest) {
+	for _, pr := range prs {
+		keys := keyPattern.FindAllString(pr.Title, -1)
+		if len(keys) == 0 {
+			continue
+		}
+		a := attributed[keys[0]]
+		a.PullRequests++
+		attributed[keys[0]] = a
+	}
+}
+
+// AggregateActivity sums PR counts across repos.
 func AggregateActivity(activities map[string]domain.Activity) domain.Activity {
 	var total domain.Activity
 	for _, a := range activities {
@@ -93,60 +119,87 @@ func AggregateActivity(activities map[string]domain.Activity) domain.Activity {
 	return total
 }
 
-// fetchPRCount counts merged PRs in a repo since the given time.
-func (c *Client) fetchPRCount(ctx context.Context, r Repo, since time.Time) (int, error) {
-	q := fmt.Sprintf("repo:%s/%s is:pr is:merged merged:>=%s",
-		r.Owner, r.Name, since.Format("2006-01-02"))
-	endpoint := fmt.Sprintf("%s/search/issues?q=%s&per_page=1", c.baseURL, url.QueryEscape(q))
+// fetchPRsBatched fetches merged PRs across all repos in a single search query.
+// GitHub search supports multiple repo: qualifiers. Returns PRs grouped by
+// repo string ("owner/name"). Capped at 500 results to stay within rate limits.
+func (c *Client) fetchPRsBatched(ctx context.Context, repos []string, since time.Time) (map[string][]PullRequest, error) {
+	parsedRepos := make([]Repo, 0, len(repos))
+	for _, repo := range repos {
+		r, ok := parseRepo(repo)
+		if !ok {
+			continue
+		}
+		parsedRepos = append(parsedRepos, r)
+	}
+	if len(parsedRepos) == 0 {
+		return nil, nil
+	}
 
-	var result struct {
-		TotalCount int `json:"total_count"`
+	var repoFilters []string
+	for _, r := range parsedRepos {
+		repoFilters = append(repoFilters, fmt.Sprintf("repo:%s/%s", r.Owner, r.Name))
 	}
-	if err := c.getJSON(ctx, endpoint, &result); err != nil {
-		return 0, err
-	}
-	return result.TotalCount, nil
+	q := fmt.Sprintf("%s is:pr is:merged merged:>=%s",
+		strings.Join(repoFilters, " "), since.Format("2006-01-02"))
+	endpoint := fmt.Sprintf("%s/search/issues?q=%s&per_page=100&sort=updated&order=desc",
+		c.baseURL, url.QueryEscape(q))
+
+	return c.paginatePRs(ctx, endpoint)
 }
 
-// fetchCommitCount counts commits in a repo's default branch since the given time.
-func (c *Client) fetchCommitCount(ctx context.Context, r Repo, since time.Time) (int, error) {
-	// GitHub's commits API doesn't return a total count directly, so we
-	// paginate. For activity tracking, we cap at 500 to avoid excessive API
-	// calls on very active repos.
-	endpoint := fmt.Sprintf("%s/repos/%s/%s/commits?since=%s&per_page=100",
-		c.baseURL, r.Owner, r.Name, since.Format(time.RFC3339))
-
-	count := 0
+// paginatePRs follows the search pagination and collects PRs grouped by repo.
+func (c *Client) paginatePRs(ctx context.Context, endpoint string) (map[string][]PullRequest, error) {
+	result := make(map[string][]PullRequest)
 	page := 1
+	total := 0
 	for {
-		url := fmt.Sprintf("%s&page=%d", endpoint, page)
-		var commits []struct {
-			SHA string `json:"sha"`
+		pageURL := fmt.Sprintf("%s&page=%d", endpoint, page)
+		var resp struct {
+			Items []struct {
+				Number        int    `json:"number"`
+				Title         string `json:"title"`
+				RepositoryURL string `json:"repository_url"`
+			} `json:"items"`
+			TotalCount int `json:"total_count"`
 		}
-		next, err := c.getJSONWithPagination(ctx, url, &commits)
+		next, err := c.getJSONWithPagination(ctx, pageURL, &resp)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
-		count += len(commits)
-		if count >= 500 {
-			count = 500
-			break
+		for _, item := range resp.Items {
+			repoStr := repoFromURL(item.RepositoryURL)
+			result[repoStr] = append(result[repoStr], PullRequest{
+				Number: item.Number,
+				Title:  item.Title,
+			})
 		}
-		if next == "" {
-			break
-		}
-		if len(commits) < 100 {
+		total += len(resp.Items)
+		if shouldStopPagination(next, total, len(resp.Items)) {
 			break
 		}
 		page++
 	}
-	return count, nil
+	return result, nil
 }
 
-// getJSON makes an authenticated GET request and decodes JSON.
-func (c *Client) getJSON(ctx context.Context, endpoint string, v any) error {
-	_, err := c.getJSONWithPagination(ctx, endpoint, v)
-	return err
+// shouldStopPagination reports whether the PR search pagination loop should stop.
+func shouldStopPagination(next string, total, pageSize int) bool {
+	if next == "" {
+		return true
+	}
+	if total >= 500 {
+		return true
+	}
+	return pageSize < 100
+}
+
+// repoFromURL extracts "owner/name" from a GitHub repository API URL.
+func repoFromURL(repoURL string) string {
+	parts := strings.Split(repoURL, "/repos/")
+	if len(parts) != 2 {
+		return ""
+	}
+	return parts[1]
 }
 
 // getJSONWithPagination makes an authenticated GET request, decodes JSON, and
@@ -182,7 +235,6 @@ func parseNextLink(linkHeader string) string {
 	if linkHeader == "" {
 		return ""
 	}
-	// Link: <https://api.github.com/...&page=2>; rel="next", <...>; rel="last"
 	parts := strings.Split(linkHeader, ",")
 	for _, part := range parts {
 		if strings.Contains(part, `rel="next"`) {
