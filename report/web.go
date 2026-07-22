@@ -151,9 +151,10 @@ const dashboardTemplate = `<!DOCTYPE html>
 
       {{if .Unmapped}}
       <div class="unmapped-section" x-data="{ show: false }">
-        <div class="unmapped-header" role="button" tabindex="0" @click="show = !show" @keydown.enter="show = !show">
+        <div class="unmapped-header" role="button" tabindex="0" :aria-expanded="show" @click="show = !show" @keydown.enter="show = !show" @keydown.space.prevent="show = !show">
           <span class="badge badge-yellow">{{len .Unmapped}} unmapped epics</span>
-          <span class="unmapped-hint">work serving no declared goal — click to {{if false}}hide{{else}}show{{end}}</span>
+          <span class="unmapped-hint" x-show="!show">click to show</span>
+          <span class="unmapped-hint" x-show="show" x-cloak>click to hide</span>
         </div>
         <template x-if="show">
           <div class="unmapped-list">

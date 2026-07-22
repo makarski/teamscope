@@ -396,6 +396,20 @@ func (s *Store) Latest(ctx context.Context, team string) (domain.Snapshot, error
 	return snap, nil
 }
 
+// LatestNarrative returns only the narrative from the most recent snapshot for
+// a team, without hydrating epics or states. Lightweight alternative to Latest
+// when only the PO brief is needed.
+func (s *Store) LatestNarrative(ctx context.Context, team string) (string, error) {
+	var narrative string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT narrative FROM snapshots WHERE team = ? ORDER BY taken_at DESC LIMIT 1`, team,
+	).Scan(&narrative)
+	if err != nil {
+		return "", fmt.Errorf("store: query latest narrative for %q: %w", team, err)
+	}
+	return narrative, nil
+}
+
 // Trend returns up to n most recent snapshots for a team, newest first.
 // Epics are not hydrated; use Latest for full detail.
 func (s *Store) Trend(ctx context.Context, team string, n int) ([]domain.Snapshot, error) {

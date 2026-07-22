@@ -98,12 +98,12 @@ func unmappedEpicLines(epics []domain.ClassifiedEpic) string {
 		if e.Criterion.Key != "" {
 			continue
 		}
-		b.WriteString(epicLine(e))
 		count++
-		if count >= 10 {
+		if count > 10 {
 			b.WriteString("  ... (truncated)\n")
 			break
 		}
+		b.WriteString(epicLine(e))
 	}
 	if count == 0 {
 		b.WriteString("  (none)\n")

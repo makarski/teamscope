@@ -13,7 +13,7 @@ import (
 type trendSource interface {
 	Teams(ctx context.Context) ([]string, error)
 	TrendMetrics(ctx context.Context, team string, n int) ([]domain.TrendPoint, error)
-	Latest(ctx context.Context, team string) (domain.Snapshot, error)
+	LatestNarrative(ctx context.Context, team string) (string, error)
 }
 
 // TrendRenderer renders the trends dashboard as static HTML.
@@ -48,10 +48,11 @@ func (tr *TrendRenderer) Render(ctx context.Context, w io.Writer) error {
 			return fmt.Errorf("report: load trend for %q: %w", team, err)
 		}
 		trend := NewTeamTrend(team, points)
-		// Load the latest snapshot's narrative for the trend brief.
-		if snap, err := tr.source.Latest(ctx, team); err == nil {
-			trend.Narrative = snap.Narrative
+		narrative, err := tr.source.LatestNarrative(ctx, team)
+		if err != nil {
+			return fmt.Errorf("report: load narrative for %q: %w", team, err)
 		}
+		trend.Narrative = narrative
 		trends = append(trends, trend)
 	}
 
