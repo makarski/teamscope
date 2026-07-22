@@ -1,6 +1,8 @@
 package report
 
 import (
+	"html/template"
+
 	"github.com/makarski/teamscope/domain"
 )
 
@@ -65,4 +67,45 @@ func (t TeamTrend) LastUpdated() string {
 		return ""
 	}
 	return t.Points[len(t.Points)-1].Date
+}
+
+// FirstDate returns the date of the oldest snapshot, or empty string.
+func (t TeamTrend) FirstDate() string {
+	if len(t.Points) == 0 {
+		return ""
+	}
+	return t.Points[0].Date
+}
+
+// LastDate returns the date of the most recent snapshot, or empty string.
+func (t TeamTrend) LastDate() string {
+	return t.LastUpdated()
+}
+
+// EpicChart returns an SVG filled chart for epic count over time.
+func (t TeamTrend) EpicChart() template.HTML {
+	return template.HTML(t.chart(func(p TrendPointView) float64 { return float64(p.EpicCount) }, "#4a7fff"))
+}
+
+// FocusChart returns an SVG filled chart for blocker focus % over time.
+func (t TeamTrend) FocusChart() template.HTML {
+	return template.HTML(t.chart(func(p TrendPointView) float64 { return float64(p.BlockerFocus) }, "#22c55e"))
+}
+
+// DriftChart returns an SVG filled chart for drift count over time.
+func (t TeamTrend) DriftChart() template.HTML {
+	return template.HTML(t.chart(func(p TrendPointView) float64 { return float64(p.DriftCount) }, "#ef4444"))
+}
+
+// UnmappedChart returns an SVG filled chart for unmapped count over time.
+func (t TeamTrend) UnmappedChart() template.HTML {
+	return template.HTML(t.chart(func(p TrendPointView) float64 { return float64(p.UnmappedCount) }, "#f59e0b"))
+}
+
+func (t TeamTrend) chart(valueFn func(TrendPointView) float64, color string) string {
+	vals := make([]float64, len(t.Points))
+	for i, p := range t.Points {
+		vals[i] = valueFn(p)
+	}
+	return svgFilledChart([]chartSeries{{values: vals, color: color}}, 300, 60)
 }
