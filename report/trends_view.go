@@ -8,8 +8,9 @@ import (
 
 // TeamTrend is the display model for one team's trend data.
 type TeamTrend struct {
-	Team   string
-	Points []TrendPointView
+	Team      string
+	Points    []TrendPointView
+	Narrative string
 }
 
 // TrendPointView is a single point in a team's trend chart.

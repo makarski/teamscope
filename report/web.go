@@ -127,7 +127,7 @@ const dashboardTemplate = `<!DOCTYPE html>
       {{if .States}}
       <div class="pillars">
         {{range .States}}
-        <div class="pillar">
+        <div class="pillar{{if eq .Drift "optimistic"}} pillar-drift{{else if eq .Drift "stale"}} pillar-stale{{end}}">
           <div class="pillar-head">
             <span class="pillar-title">{{.Title}}</span>
             {{if eq .Drift "optimistic"}}<span class="badge badge-yellow">optimistic</span>
@@ -146,6 +146,26 @@ const dashboardTemplate = `<!DOCTYPE html>
           {{end}}
         </div>
         {{end}}
+      </div>
+      {{end}}
+
+      {{if .Unmapped}}
+      <div class="unmapped-section" x-data="{ show: false }">
+        <div class="unmapped-header" role="button" tabindex="0" @click="show = !show" @keydown.enter="show = !show">
+          <span class="badge badge-yellow">{{len .Unmapped}} unmapped epics</span>
+          <span class="unmapped-hint">work serving no declared goal — click to {{if false}}hide{{else}}show{{end}}</span>
+        </div>
+        <template x-if="show">
+          <div class="unmapped-list">
+            {{range .Unmapped}}
+            <div class="unmapped-item">
+              {{if $.JiraBaseURL}}<a href="{{$.JiraBaseURL}}/browse/{{.Key}}">{{.Key}}</a>{{else}}{{.Key}}{{end}}
+              {{.Summary}}
+              <span class="st-{{.Status}}">{{.Status}}</span>
+            </div>
+            {{end}}
+          </div>
+        </template>
       </div>
       {{end}}
 

@@ -13,6 +13,7 @@ import (
 type trendSource interface {
 	Teams(ctx context.Context) ([]string, error)
 	TrendMetrics(ctx context.Context, team string, n int) ([]domain.TrendPoint, error)
+	Latest(ctx context.Context, team string) (domain.Snapshot, error)
 }
 
 // TrendRenderer renders the trends dashboard as static HTML.
@@ -46,7 +47,12 @@ func (tr *TrendRenderer) Render(ctx context.Context, w io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("report: load trend for %q: %w", team, err)
 		}
-		trends = append(trends, NewTeamTrend(team, points))
+		trend := NewTeamTrend(team, points)
+		// Load the latest snapshot's narrative for the trend brief.
+		if snap, err := tr.source.Latest(ctx, team); err == nil {
+			trend.Narrative = snap.Narrative
+		}
+		trends = append(trends, trend)
 	}
 
 	data := trendPageData{
@@ -97,6 +103,12 @@ const trendsTemplate = `<!DOCTYPE html>
   <section class="trend-team">
     <h2>{{$team.Team}} <span class="badge badge-dim" style="margin-left:.5rem">{{$team.SnapshotCount}} snapshots</span></h2>
     <div class="trend-body">
+      {{if $team.Narrative}}
+      <div class="narrative">
+        <div class="label">PO Trend Brief</div>
+        <p>{{$team.Narrative}}</p>
+      </div>
+      {{end}}
       {{if $team.HasData}}
       <div class="chart-row">
         <span class="chart-row-label">Epics tracked</span>
