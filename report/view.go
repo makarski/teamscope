@@ -35,6 +35,8 @@ type PillarStateView struct {
 	DoneCount int
 	OpenCount int
 	Tickets   []TicketView
+	Advancing int // epics that advance this criterion
+	Total     int // epics mapped to this criterion
 }
 
 // TicketView is a Jira ticket with its live status. Used for both pillar
@@ -96,13 +98,19 @@ func NewTeamView(snap domain.Snapshot) TeamView {
 		OffTrack:     filterOffTrack(epics),
 		Epics:        epics,
 		BlockerFocus: blockerFocus(snap),
-		States:       pillarStates(snap.States),
+		States:       pillarStates(snap.States, coverage),
 		Narrative:    snap.Narrative,
 	}
 }
 
-// pillarStates converts domain CriterionStates to display views.
-func pillarStates(states []domain.CriterionState) []PillarStateView {
+// pillarStates converts domain CriterionStates to display views, enriching
+// them with coverage data (advancing/total epics) from the criterion coverage.
+func pillarStates(states []domain.CriterionState, coverage []CriterionCoverage) []PillarStateView {
+	covByKey := map[string]CriterionCoverage{}
+	for _, c := range coverage {
+		covByKey[c.Key] = c
+	}
+
 	views := make([]PillarStateView, 0, len(states))
 	for _, s := range states {
 		tickets := make([]TicketView, 0, len(s.LinkedKeys))
@@ -112,6 +120,7 @@ func pillarStates(states []domain.CriterionState) []PillarStateView {
 				Status: t.Status,
 			})
 		}
+		cov := covByKey[s.Criterion.Key]
 		views = append(views, PillarStateView{
 			Key:       s.Criterion.Key,
 			Title:     s.Criterion.Title,
@@ -120,6 +129,8 @@ func pillarStates(states []domain.CriterionState) []PillarStateView {
 			DoneCount: s.DoneCount,
 			OpenCount: s.OpenCount,
 			Tickets:   tickets,
+			Advancing: cov.Advancing,
+			Total:     cov.Total,
 		})
 	}
 	return views

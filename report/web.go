@@ -136,7 +136,11 @@ const dashboardTemplate = `<!DOCTYPE html>
             {{else}}<span class="badge badge-dim">open</span>{{end}}
           </div>
           <div class="pillar-stats">
+            {{if and (eq .DoneCount 0) (eq .OpenCount 0)}}
+            {{.Advancing}} advancing / {{.Total}} epics
+            {{else}}
             {{.DoneCount}} done / {{.OpenCount}} open
+            {{end}}
             {{if .Tickets}} &middot; {{len .Tickets}} tickets{{end}}
           </div>
           {{if .Tickets}}
