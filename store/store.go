@@ -439,6 +439,67 @@ func (s *Store) Teams(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
+// TrendMetrics returns up to n historical trend points for a team, oldest
+// first. Each point carries aggregate metrics computed from stored data
+// without loading full epic details. Epic and drift counts are computed in
+// separate subqueries to avoid row multiplication from the JOIN.
+func (s *Store) TrendMetrics(ctx context.Context, team string, n int) ([]domain.TrendPoint, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT s.id, s.taken_at,
+		        COALESCE(ec.epic_count, 0),
+		        COALESCE(ec.mapped, 0),
+		        COALESCE(ec.unmapped, 0),
+		        COALESCE(dc.drift_count, 0)
+		 FROM snapshots s
+		 LEFT JOIN (
+		   SELECT snapshot_id,
+		          COUNT(*) AS epic_count,
+		          SUM(CASE WHEN criterion_key != '' THEN 1 ELSE 0 END) AS mapped,
+		          SUM(CASE WHEN criterion_key = '' THEN 1 ELSE 0 END) AS unmapped
+		   FROM epics GROUP BY snapshot_id
+		 ) ec ON ec.snapshot_id = s.id
+		 LEFT JOIN (
+		   SELECT snapshot_id, COUNT(*) AS drift_count
+		   FROM criterion_states
+		   WHERE drift != '' AND drift != 'none'
+		   GROUP BY snapshot_id
+		 ) dc ON dc.snapshot_id = s.id
+		 WHERE s.team = ?
+		 ORDER BY s.taken_at ASC
+		 LIMIT ?`, team, n)
+	if err != nil {
+		return nil, fmt.Errorf("store: query trend metrics: %w", err)
+	}
+	defer rows.Close()
+
+	var out []domain.TrendPoint
+	for rows.Next() {
+		var (
+			point   domain.TrendPoint
+			takenAt string
+			mapped  int
+		)
+		if err := rows.Scan(&point.SnapshotID, &takenAt, &point.EpicCount, &mapped, &point.UnmappedCount, &point.DriftCount); err != nil {
+			return nil, fmt.Errorf("store: scan trend point: %w", err)
+		}
+		t, err := time.Parse(timeLayout, takenAt)
+		if err != nil {
+			return nil, fmt.Errorf("store: parse trend taken_at %q: %w", takenAt, err)
+		}
+		point.TakenAt = t
+		point.BlockerFocus = pctInt(mapped, point.EpicCount)
+		out = append(out, point)
+	}
+	return out, rows.Err()
+}
+
+func pctInt(n, total int) int {
+	if total == 0 {
+		return 0
+	}
+	return int(float64(n) / float64(total) * 100)
+}
+
 // scanner unifies *sql.Row and *sql.Rows for meta scanning.
 type scanner interface {
 	Scan(dest ...any) error

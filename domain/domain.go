@@ -179,6 +179,16 @@ type Snapshot struct {
 	Narrative string           `json:"narrative"`
 }
 
+// TrendPoint is a single historical data point for a team's trend chart.
+type TrendPoint struct {
+	SnapshotID    int64     `json:"snapshot_id"`
+	TakenAt       time.Time `json:"taken_at"`
+	EpicCount     int       `json:"epic_count"`
+	BlockerFocus  int       `json:"blocker_focus"`
+	DriftCount    int       `json:"drift_count"`
+	UnmappedCount int       `json:"unmapped_count"`
+}
+
 // Mix returns the share of epics mapped to each criterion key. Shares are
 // computed over all epics in the snapshot and sum to 1.0; epics that mapped to
 // no criterion are counted under the empty key "".
