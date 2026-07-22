@@ -73,11 +73,7 @@ const trendsTemplate = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Teamscope — Trends</title>
 <style>` + dashboardCSS + `
-  .nav-tabs { display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
-  .nav-tabs a { padding: .6rem 1.2rem; text-decoration: none; color: var(--text-dim); font-size: .9rem; font-weight: 600; border-bottom: 2px solid transparent; }
-  .nav-tabs a:hover { color: var(--text); }
-  .nav-tabs a.active { color: var(--accent); border-bottom-color: var(--accent); }
-
+  .sparkline-row { display: flex; align-items: center; gap: 1rem; margin-bottom: .75rem; }
   .trend-team { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 1.5rem; overflow: hidden; }
   .trend-team h2 { font-size: 1.1rem; font-weight: 600; padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); }
   .trend-body { padding: 1.25rem 1.5rem; }
@@ -170,6 +166,9 @@ func sparkHeight(value int, _ any, max int) int {
 		max = 1
 	}
 	h := int(float64(value) / float64(max) * 100)
+	if h > 100 {
+		h = 100
+	}
 	if h < 2 && value > 0 {
 		h = 2
 	}

@@ -37,12 +37,12 @@ func runServe(ctx context.Context, configPath string, args []string) error {
 	}
 
 	if *out != "" {
-		return writeStatic(ctx, renderer, *out)
+		return writeStatic(ctx, renderer, trendRenderer, *out)
 	}
 	return serveHTTP(renderer, trendRenderer, *addr)
 }
 
-func writeStatic(ctx context.Context, renderer *report.WebRenderer, path string) error {
+func writeStatic(ctx context.Context, renderer *report.WebRenderer, trendRenderer *report.TrendRenderer, path string) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("serve: create %s: %w", path, err)
@@ -53,6 +53,23 @@ func writeStatic(ctx context.Context, renderer *report.WebRenderer, path string)
 		return err
 	}
 	slog.Info("wrote dashboard", "path", path)
+
+	// Also write the trends page next to it.
+	trendPath := path
+	if i := len(path) - len(".html"); i > 0 && path[i:] == ".html" {
+		trendPath = path[:i] + "-trends.html"
+	} else {
+		trendPath = path + "-trends"
+	}
+	tf, err := os.Create(trendPath)
+	if err != nil {
+		return fmt.Errorf("serve: create %s: %w", trendPath, err)
+	}
+	defer tf.Close()
+	if err := trendRenderer.Render(ctx, tf); err != nil {
+		return err
+	}
+	slog.Info("wrote trends page", "path", trendPath)
 	return nil
 }
 

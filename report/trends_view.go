@@ -1,8 +1,6 @@
 package report
 
 import (
-	"time"
-
 	"github.com/makarski/teamscope/domain"
 )
 
@@ -23,12 +21,11 @@ type TrendPointView struct {
 
 const trendDateLayout = "01-02"
 
-// NewTeamTrend builds a display model from trend points.
+// NewTeamTrend builds a display model from trend points. Points are expected
+// to be in oldest-first order (as returned by the store).
 func NewTeamTrend(team string, points []domain.TrendPoint) TeamTrend {
 	views := make([]TrendPointView, 0, len(points))
-	// Reverse to oldest-first for charting.
-	for i := len(points) - 1; i >= 0; i-- {
-		p := points[i]
+	for _, p := range points {
 		views = append(views, TrendPointView{
 			Date:          p.TakenAt.Format(trendDateLayout),
 			EpicCount:     p.EpicCount,
@@ -69,6 +66,3 @@ func (t TeamTrend) LastUpdated() string {
 	}
 	return t.Points[len(t.Points)-1].Date
 }
-
-// Unused but keeps time import for future use.
-var _ = time.Now

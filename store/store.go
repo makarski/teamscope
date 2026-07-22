@@ -441,20 +441,31 @@ func (s *Store) Teams(ctx context.Context) ([]string, error) {
 
 // TrendMetrics returns up to n historical trend points for a team, oldest
 // first. Each point carries aggregate metrics computed from stored data
-// without loading full epic details.
+// without loading full epic details. Epic and drift counts are computed in
+// separate subqueries to avoid row multiplication from the JOIN.
 func (s *Store) TrendMetrics(ctx context.Context, team string, n int) ([]domain.TrendPoint, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT s.id, s.taken_at,
-		        COUNT(e.id) AS epic_count,
-		        SUM(CASE WHEN e.criterion_key != '' THEN 1 ELSE 0 END) AS mapped,
-		        SUM(CASE WHEN e.criterion_key = '' THEN 1 ELSE 0 END) AS unmapped,
-		        SUM(CASE WHEN cs.drift != '' AND cs.drift != 'none' THEN 1 ELSE 0 END) AS drift_count
+		        COALESCE(ec.epic_count, 0),
+		        COALESCE(ec.mapped, 0),
+		        COALESCE(ec.unmapped, 0),
+		        COALESCE(dc.drift_count, 0)
 		 FROM snapshots s
-		 LEFT JOIN epics e ON e.snapshot_id = s.id
-		 LEFT JOIN criterion_states cs ON cs.snapshot_id = s.id
+		 LEFT JOIN (
+		   SELECT snapshot_id,
+		          COUNT(*) AS epic_count,
+		          SUM(CASE WHEN criterion_key != '' THEN 1 ELSE 0 END) AS mapped,
+		          SUM(CASE WHEN criterion_key = '' THEN 1 ELSE 0 END) AS unmapped
+		   FROM epics GROUP BY snapshot_id
+		 ) ec ON ec.snapshot_id = s.id
+		 LEFT JOIN (
+		   SELECT snapshot_id, COUNT(*) AS drift_count
+		   FROM criterion_states
+		   WHERE drift != '' AND drift != 'none'
+		   GROUP BY snapshot_id
+		 ) dc ON dc.snapshot_id = s.id
 		 WHERE s.team = ?
-		 GROUP BY s.id
-		 ORDER BY s.taken_at DESC
+		 ORDER BY s.taken_at ASC
 		 LIMIT ?`, team, n)
 	if err != nil {
 		return nil, fmt.Errorf("store: query trend metrics: %w", err)
