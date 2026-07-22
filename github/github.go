@@ -95,7 +95,7 @@ func AggregateActivity(activities map[string]domain.Activity) domain.Activity {
 
 // fetchPRCount counts merged PRs in a repo since the given time.
 func (c *Client) fetchPRCount(ctx context.Context, r Repo, since time.Time) (int, error) {
-	q := fmt.Sprintf("repo:%s/%s is:pr is:merged created:>=%s",
+	q := fmt.Sprintf("repo:%s/%s is:pr is:merged merged:>=%s",
 		r.Owner, r.Name, since.Format("2006-01-02"))
 	endpoint := fmt.Sprintf("%s/search/issues?q=%s&per_page=1", c.baseURL, url.QueryEscape(q))
 
@@ -128,10 +128,11 @@ func (c *Client) fetchCommitCount(ctx context.Context, r Repo, since time.Time) 
 			return 0, err
 		}
 		count += len(commits)
-		if next == "" {
+		if count >= 500 {
+			count = 500
 			break
 		}
-		if count >= 500 {
+		if next == "" {
 			break
 		}
 		if len(commits) < 100 {

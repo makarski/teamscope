@@ -96,13 +96,16 @@ func briefPrompt(snap domain.Snapshot) string {
 	return b.String()
 }
 
-// teamActivity sums GitHub activity across all epics.
+// teamActivity returns the GitHub activity for the team. Since activity is a
+// team-level signal stored on every epic, we take the first non-zero value
+// rather than summing (which would multiply by epic count).
 func teamActivity(epics []domain.ClassifiedEpic) (prs, commits int) {
 	for _, e := range epics {
-		prs += e.Activity.PullRequests
-		commits += e.Activity.Commits
+		if e.Activity.PullRequests > 0 || e.Activity.Commits > 0 {
+			return e.Activity.PullRequests, e.Activity.Commits
+		}
 	}
-	return prs, commits
+	return 0, 0
 }
 
 // unmappedEpicLines formats up to 10 unmapped epics for the narrative prompt.

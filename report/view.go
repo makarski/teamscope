@@ -280,20 +280,25 @@ func pct(n, total int) int {
 	return int(math.Round(float64(n) / float64(total) * 100))
 }
 
-// teamPRs sums GitHub PRs across all epics.
+// teamPRs returns the GitHub PR count for the team. Since activity is a
+// team-level signal stored on every epic, we take the first non-zero value
+// rather than summing (which would multiply by epic count).
 func teamPRs(epics []domain.ClassifiedEpic) int {
-	total := 0
 	for _, e := range epics {
-		total += e.Activity.PullRequests
+		if e.Activity.PullRequests > 0 {
+			return e.Activity.PullRequests
+		}
 	}
-	return total
+	return 0
 }
 
-// teamCommits sums GitHub commits across all epics.
+// teamCommits returns the GitHub commit count for the team. Same logic as
+// teamPRs — take the first non-zero value, not a sum.
 func teamCommits(epics []domain.ClassifiedEpic) int {
-	total := 0
 	for _, e := range epics {
-		total += e.Activity.Commits
+		if e.Activity.Commits > 0 {
+			return e.Activity.Commits
+		}
 	}
-	return total
+	return 0
 }
