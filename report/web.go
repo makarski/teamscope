@@ -127,7 +127,7 @@ const dashboardTemplate = `<!DOCTYPE html>
       {{if .States}}
       <div class="pillars">
         {{range .States}}
-        <div class="pillar">
+        <div class="pillar{{if eq .Drift "optimistic"}} pillar-drift{{else if eq .Drift "stale"}} pillar-stale{{end}}">
           <div class="pillar-head">
             <span class="pillar-title">{{.Title}}</span>
             {{if eq .Drift "optimistic"}}<span class="badge badge-yellow">optimistic</span>
@@ -136,7 +136,11 @@ const dashboardTemplate = `<!DOCTYPE html>
             {{else}}<span class="badge badge-dim">open</span>{{end}}
           </div>
           <div class="pillar-stats">
+            {{if and (eq .DoneCount 0) (eq .OpenCount 0)}}
+            {{.Advancing}} advancing / {{.Total}} epics
+            {{else}}
             {{.DoneCount}} done / {{.OpenCount}} open
+            {{end}}
             {{if .Tickets}} &middot; {{len .Tickets}} tickets{{end}}
           </div>
           {{if .Tickets}}
@@ -146,6 +150,27 @@ const dashboardTemplate = `<!DOCTYPE html>
           {{end}}
         </div>
         {{end}}
+      </div>
+      {{end}}
+
+      {{if .Unmapped}}
+      <div class="unmapped-section" x-data="{ show: false }">
+        <div class="unmapped-header" role="button" tabindex="0" :aria-expanded="show" @click="show = !show" @keydown.enter="show = !show" @keydown.space.prevent="show = !show">
+          <span class="badge badge-yellow">{{len .Unmapped}} unmapped epics</span>
+          <span class="unmapped-hint" x-show="!show">click to show</span>
+          <span class="unmapped-hint" x-show="show" x-cloak>click to hide</span>
+        </div>
+        <template x-if="show">
+          <div class="unmapped-list">
+            {{range .Unmapped}}
+            <div class="unmapped-item">
+              {{if $.JiraBaseURL}}<a href="{{$.JiraBaseURL}}/browse/{{.Key}}">{{.Key}}</a>{{else}}{{.Key}}{{end}}
+              {{.Summary}}
+              <span class="st-{{.Status}}">{{.Status}}</span>
+            </div>
+            {{end}}
+          </div>
+        </template>
       </div>
       {{end}}
 

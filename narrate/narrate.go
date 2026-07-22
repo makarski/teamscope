@@ -52,11 +52,15 @@ func complete(ctx context.Context, ai Completer, prompt, label string) (string, 
 
 func briefPrompt(snap domain.Snapshot) string {
 	var b strings.Builder
-	b.WriteString("You are a product owner writing a concise progress brief for your team. ")
-	b.WriteString("Write as a human would: direct, specific, no bullet-point lists of raw data. ")
-	b.WriteString("Cover: what the team is focused on, what's advancing vs stalled, ")
-	b.WriteString("any drift between claimed and actual readiness, and what needs attention next. ")
-	b.WriteString("Keep it to 3-5 sentences. Plain text, no markdown.\n\n")
+	b.WriteString("You are a product owner writing a progress brief for your team. ")
+	b.WriteString("Write as a human would: direct, specific, no bullet-point lists of raw data.\n\n")
+	b.WriteString("Structure your brief in two sections:\n")
+	b.WriteString("1. SUMMARY (2-3 sentences): What the team is focused on, what's advancing vs stalled, ")
+	b.WriteString("and any drift between claimed and actual readiness.\n")
+	b.WriteString("2. ACTION PLAN (2-4 numbered items): Concrete next steps — what needs immediate ")
+	b.WriteString("attention, what's blocked, what should be deprioritized. Be specific: reference ")
+	b.WriteString("ticket keys or pillar names where relevant.\n\n")
+	b.WriteString("Plain text, no markdown. Use the section labels SUMMARY: and ACTION PLAN:\n\n")
 
 	b.WriteString(fmt.Sprintf("Team: %s\n", snap.Team))
 	b.WriteString(fmt.Sprintf("Rubric: %s\n", snap.Rubric.Name))
@@ -75,11 +79,35 @@ func briefPrompt(snap domain.Snapshot) string {
 		}
 	}
 
+	b.WriteString("\nUnmapped epics (work serving no declared goal):\n")
+	b.WriteString(unmappedEpicLines(snap.Epics))
+
 	b.WriteString("\nEpics:\n")
 	for _, e := range snap.Epics {
 		b.WriteString(epicLine(e))
 	}
 
+	return b.String()
+}
+
+// unmappedEpicLines formats up to 10 unmapped epics for the narrative prompt.
+func unmappedEpicLines(epics []domain.ClassifiedEpic) string {
+	var b strings.Builder
+	count := 0
+	for _, e := range epics {
+		if e.Criterion.Key != "" {
+			continue
+		}
+		count++
+		if count > 10 {
+			b.WriteString("  ... (truncated)\n")
+			break
+		}
+		b.WriteString(epicLine(e))
+	}
+	if count == 0 {
+		b.WriteString("  (none)\n")
+	}
 	return b.String()
 }
 

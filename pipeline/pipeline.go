@@ -187,7 +187,28 @@ func (r *Runner) collectEpics(team config.Team) ([]ingest.RawEpic, error) {
 		}
 		all = append(all, standalone...)
 	}
+	all = deduplicateEpics(all)
 	return all, nil
+}
+
+// deduplicateEpics removes duplicate epics by key, keeping the first occurrence
+// (which has child issues populated). Standalone issues don't have children, so
+// the epic version with children always wins.
+func deduplicateEpics(epics []ingest.RawEpic) []ingest.RawEpic {
+	seen := make(map[string]bool, len(epics))
+	out := make([]ingest.RawEpic, 0, len(epics))
+	for _, e := range epics {
+		key := e.Epic.Key
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, e)
+	}
+	if dupes := len(epics) - len(out); dupes > 0 {
+		slog.Info("deduplicated epics", "removed", dupes, "kept", len(out))
+	}
+	return out
 }
 
 // childKeys builds a set of all child issue keys across a set of epics, so
