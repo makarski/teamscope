@@ -439,10 +439,10 @@ func (s *Store) Teams(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
-// TrendMetrics returns up to n historical trend points for a team, oldest
-// first. Each point carries aggregate metrics computed from stored data
-// without loading full epic details. Epic and drift counts are computed in
-// separate subqueries to avoid row multiplication from the JOIN.
+// TrendMetrics returns up to n most recent historical trend points for a
+// team, oldest first. Each point carries aggregate metrics computed from
+// stored data without loading full epic details. Epic and drift counts are
+// computed in separate subqueries to avoid row multiplication from the JOIN.
 func (s *Store) TrendMetrics(ctx context.Context, team string, n int) ([]domain.TrendPoint, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT s.id, s.taken_at,
@@ -450,7 +450,10 @@ func (s *Store) TrendMetrics(ctx context.Context, team string, n int) ([]domain.
 		        COALESCE(ec.mapped, 0),
 		        COALESCE(ec.unmapped, 0),
 		        COALESCE(dc.drift_count, 0)
-		 FROM snapshots s
+		 FROM (
+		   SELECT id, taken_at FROM snapshots
+		   WHERE team = ? ORDER BY taken_at DESC LIMIT ?
+		 ) s
 		 LEFT JOIN (
 		   SELECT snapshot_id,
 		          COUNT(*) AS epic_count,
@@ -464,9 +467,7 @@ func (s *Store) TrendMetrics(ctx context.Context, team string, n int) ([]domain.
 		   WHERE drift != '' AND drift != 'none'
 		   GROUP BY snapshot_id
 		 ) dc ON dc.snapshot_id = s.id
-		 WHERE s.team = ?
-		 ORDER BY s.taken_at ASC
-		 LIMIT ?`, team, n)
+		 ORDER BY s.taken_at ASC`, team, n)
 	if err != nil {
 		return nil, fmt.Errorf("store: query trend metrics: %w", err)
 	}
@@ -497,7 +498,7 @@ func pctInt(n, total int) int {
 	if total == 0 {
 		return 0
 	}
-	return int(float64(n) / float64(total) * 100)
+	return int(float64(n)/float64(total)*100 + 0.5)
 }
 
 // scanner unifies *sql.Row and *sql.Rows for meta scanning.
