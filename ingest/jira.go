@@ -74,10 +74,9 @@ func NewJiraClient(cfg *config.Jira) (*JiraClient, error) {
 	}, nil
 }
 
-// FetchEpics returns all epics (with child issues) for a project that are in
-// active scope this year: started this year, updated this year, or with no
-// start date set. The permissive filter keeps roadsnap's "current work" intent
-// while no longer silently dropping epics that simply lack a start date.
+// FetchEpics returns all epics (with child issues) for a project that have
+// been updated in the last 90 days. This captures current active work without
+// pulling the entire backlog history.
 //
 // Child issues are fetched in a single batched query (parent IN (...)) rather
 // than one call per epic, to avoid N+1 HTTP round-trips on boards with many
@@ -243,21 +242,36 @@ func (jc *JiraClient) fetchEpicChildren(epicKeys []string) (map[string][]jira.Is
 		}
 		batch := epicKeys[start:end]
 
-		quoted := make([]string, len(batch))
-		for i, k := range batch {
-			quoted[i] = fmt.Sprintf("%q", k)
-		}
-		jql := "parent IN (" + strings.Join(quoted, ", ") + ")"
-		raw, err := jc.search(jql)
+		raw, err := jc.searchChildrenBatch(batch)
 		if err != nil {
-			return nil, fmt.Errorf("ingest: fetch epic children: %w", err)
+			return nil, err
 		}
-		for _, item := range raw {
-			parent := item.issue.Fields.Parent.Key
-			children[parent] = append(children[parent], item.issue)
-		}
+		groupChildren(raw, children)
 	}
 	return children, nil
+}
+
+func (jc *JiraClient) searchChildrenBatch(batch []string) ([]searchItem, error) {
+	quoted := make([]string, len(batch))
+	for i, k := range batch {
+		quoted[i] = fmt.Sprintf("%q", k)
+	}
+	jql := "parent IN (" + strings.Join(quoted, ", ") + ")"
+	raw, err := jc.search(jql)
+	if err != nil {
+		return nil, fmt.Errorf("ingest: fetch epic children: %w", err)
+	}
+	return raw, nil
+}
+
+func groupChildren(raw []searchItem, children map[string][]jira.Issue) {
+	for _, item := range raw {
+		if item.issue.Fields.Parent == nil {
+			continue
+		}
+		parent := item.issue.Fields.Parent.Key
+		children[parent] = append(children[parent], item.issue)
+	}
 }
 
 func (jc *JiraClient) parseStartDate(rawFields map[string]json.RawMessage) time.Time {

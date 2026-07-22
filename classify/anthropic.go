@@ -61,24 +61,38 @@ func (ac *AnthropicClassifier) Map(ctx context.Context, epic *ingest.RawEpic, ru
 
 // MapAll maps a batch of epics to criteria in a single AI call. Returns a map
 // of epic index → criterion key. Epics that the model can't place are omitted.
-// Chunks into groups of batchChunkSize to stay within token limits.
+// Chunks into groups of batchChunkSize to stay within token limits. On partial
+// failure, mappings from successful chunks are still returned alongside the
+// error.
 func (ac *AnthropicClassifier) MapAll(ctx context.Context, epics []*ingest.RawEpic, rubric domain.Rubric) (map[int]string, error) {
 	out := make(map[int]string, len(epics))
+	var firstErr error
 	for start := 0; start < len(epics); start += batchChunkSize {
 		end := start + batchChunkSize
 		if end > len(epics) {
 			end = len(epics)
 		}
-		batch := epics[start:end]
-		mapping, err := ac.mapBatch(ctx, batch, rubric)
+		mapping, err := ac.mapBatch(ctx, epics[start:end], rubric)
 		if err != nil {
-			return nil, err
+			firstErr = setIfNil(firstErr, err)
+			continue
 		}
-		for localIdx, key := range mapping {
-			out[start+localIdx] = key
-		}
+		mergeBatchMapping(out, mapping, start)
 	}
-	return out, nil
+	return out, firstErr
+}
+
+func mergeBatchMapping(out map[int]string, mapping map[int]string, offset int) {
+	for localIdx, key := range mapping {
+		out[offset+localIdx] = key
+	}
+}
+
+func setIfNil(current, val error) error {
+	if current == nil {
+		return val
+	}
+	return current
 }
 
 func (ac *AnthropicClassifier) mapBatch(ctx context.Context, epics []*ingest.RawEpic, rubric domain.Rubric) (map[int]string, error) {

@@ -123,6 +123,13 @@ func (r *Runner) Run(ctx context.Context, team config.Team) (int64, error) {
 		epicPtrs[i] = &epics[i]
 	}
 	refs := rc.classifier.ClassifyAll(ctx, epicPtrs)
+	if len(refs) != len(epics) {
+		slog.Warn("batch classify returned wrong length, falling back", "team", team.Name, "got", len(refs), "want", len(epics))
+		refs = make([]domain.CriterionRef, len(epics))
+		for i := range epics {
+			refs[i] = rc.classifier.Classify(ctx, &epics[i])
+		}
+	}
 
 	// Batch score advancement for all epics that mapped to a criterion.
 	scoreResults := r.batchScore(ctx, epics, refs, rc.rubric)
@@ -261,8 +268,8 @@ func (r *Runner) enrich(ctx context.Context, epic *ingest.RawEpic, rc runContext
 	}
 }
 
-// applyScore merges a score result into a criterion ref, setting the lens
-// when the ref maps to a rubric criterion.
+// applyScore merges a score result into a criterion ref, setting the
+// advancement verdict and note when the ref maps to a rubric criterion.
 func applyScore(ref domain.CriterionRef, score align.ScoreResult, rubric domain.Rubric) domain.CriterionRef {
 	if _, ok := rubric.Find(ref.Key); ok {
 		ref.Advances = score.Advances

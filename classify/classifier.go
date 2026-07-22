@@ -69,14 +69,12 @@ func (c *Classifier) applyRules(epics []*ingest.RawEpic, refs []domain.Criterion
 }
 
 // fillUnmapped sends unmapped epics to the AI in a batch and fills refs.
+// On error, any partial mappings that were returned are still applied.
 func (c *Classifier) fillUnmapped(ctx context.Context, unmapped []*ingest.RawEpic, unmappedIdx []int, refs []domain.CriterionRef) {
 	if c.ai == nil {
 		return
 	}
-	mapping, err := c.ai.MapAll(ctx, unmapped, c.rubric)
-	if err != nil {
-		return
-	}
+	mapping, _ := c.ai.MapAll(ctx, unmapped, c.rubric)
 	for i, idx := range unmappedIdx {
 		if key, ok := mapping[i]; ok {
 			refs[idx] = domain.CriterionRef{Key: key, Source: domain.SourceAI}

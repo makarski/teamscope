@@ -161,7 +161,7 @@ func parseReply(raw string) (scoreReply, error) {
 		return scoreReply{}, fmt.Errorf("align: decode reply %q: %w", raw, err)
 	}
 	if reply.Advances == nil {
-		return scoreReply{}, fmt.Errorf("align: reply missing advances field")
+		return scoreReply{}, fmt.Errorf("align: reply %q missing advances field", truncateReply(raw))
 	}
 	return reply, nil
 }
@@ -179,4 +179,14 @@ func extractJSON(raw string) string {
 
 func validJSONBounds(start, end int) bool {
 	return start != -1 && end != -1 && end >= start
+}
+
+// truncateReply shortens a raw reply for safe inclusion in error messages.
+const maxReplyInError = 200
+
+func truncateReply(reply string) string {
+	if len(reply) <= maxReplyInError {
+		return reply
+	}
+	return reply[:maxReplyInError] + "…"
 }
