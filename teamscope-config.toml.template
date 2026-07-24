@@ -18,8 +18,8 @@ start_date_jql = "Start date[Date]"
   todo = ["To Do", "Backlog", "Open"]
 
 # GitHub is a secondary contribution signal. When configured, snapshot
-# fetches merged PR and commit counts per repo (last 90 days) and shows
-# them as activity badges on the dashboard and in the PO brief.
+# fetches merged PR counts per repo (last 90 days) and shows them as
+# activity badges on the dashboard and in the PO brief.
 # Add github_repos to each team below to enable.
 [github]
 token = "<github-token>"

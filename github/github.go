@@ -58,6 +58,83 @@ type PullRequest struct {
 // keyPattern matches Jira issue keys like MARIO-3730, TTTL-28, AP-123.
 var keyPattern = regexp.MustCompile(`[A-Z][A-Z0-9]+-\d+`)
 
+// nameIndex lets PRs be attributed by epic-summary tokens when no Jira key is
+// present in the PR title. It maps a lowercased distinctive token to the epic
+// key it came from. A token is distinctive when it belongs to exactly one
+// epic; tokens shared across epics are dropped to avoid ambiguous matches.
+type nameIndex struct {
+	tokenToKey map[string]string
+}
+
+// stopWords are common tokens that carry no epic-identifying signal.
+var stopWords = map[string]struct{}{
+	"the": {}, "a": {}, "an": {}, "and": {}, "or": {}, "for": {}, "to": {},
+	"of": {}, "in": {}, "on": {}, "with": {}, "by": {}, "at": {}, "from": {},
+	"is": {}, "be": {}, "as": {}, "it": {}, "this": {}, "that": {},
+}
+
+// buildNameIndex tokenizes each epic summary and keeps only tokens that map
+// to exactly one epic key. Short tokens (<4 chars) and stop words are skipped.
+func buildNameIndex(epics []EpicRef) *nameIndex {
+	counts := make(map[string]int)
+	tokenToKey := make(map[string]string)
+	for _, e := range epics {
+		tokens := tokenizeSummary(e.Summary)
+		for i := range tokens {
+			counts[tokens[i]]++
+			tokenToKey[tokens[i]] = e.Key
+		}
+	}
+	return &nameIndex{tokenToKey: distinctTokens(counts, tokenToKey)}
+}
+
+// distinctTokens returns only tokens that appear exactly once, mapping each
+// to its epic key.
+func distinctTokens(counts map[string]int, tokenToKey map[string]string) map[string]string {
+	distinct := make(map[string]string, len(counts))
+	for tok, key := range tokenToKey {
+		if counts[tok] == 1 {
+			distinct[tok] = key
+		}
+	}
+	return distinct
+}
+
+// tokenizeSummary splits a summary into lowercased tokens of >=4 chars,
+// skipping stop words.
+func tokenizeSummary(summary string) []string {
+	var out []string
+	for _, field := range strings.Fields(strings.ToLower(summary)) {
+		tok := strings.Trim(field, ".,;:!?()[]\"'")
+		if len(tok) < 4 {
+			continue
+		}
+		if _, skip := stopWords[tok]; skip {
+			continue
+		}
+		out = append(out, tok)
+	}
+	return out
+}
+
+// matchEpic returns the epic key a PR title should be attributed to. Jira key
+// match wins; otherwise the first distinctive summary token found in the title
+// is used. Returns "" when nothing matches.
+func matchEpic(title string, idx *nameIndex) string {
+	if keys := keyPattern.FindAllString(title, -1); len(keys) > 0 {
+		return keys[0]
+	}
+	if idx == nil {
+		return ""
+	}
+	for _, tok := range tokenizeSummary(title) {
+		if key, ok := idx.tokenToKey[tok]; ok {
+			return key
+		}
+	}
+	return ""
+}
+
 // FetchActivity fetches merged PRs for the given repositories in the specified
 // time window (since). Returns per-repo PR counts.
 func (c *Client) FetchActivity(ctx context.Context, repos []string, since time.Time) (map[string]domain.Activity, error) {
@@ -69,13 +146,15 @@ func (c *Client) FetchActivity(ctx context.Context, repos []string, since time.T
 }
 
 // FetchAttributedActivity fetches merged PRs, then attributes them to Jira
-// epic keys by matching keys in PR titles. Returns a map of epic key → Activity.
-func (c *Client) FetchAttributedActivity(ctx context.Context, repos []string, since time.Time) (map[string]domain.Activity, error) {
+// epic keys. Attribution first matches the epic key (e.g. PT-123) in the PR
+// title; PRs with no key in the title fall back to matching distinctive
+// tokens from the epic summary. Returns a map of epic key → Activity.
+func (c *Client) FetchAttributedActivity(ctx context.Context, repos []string, since time.Time, epics []EpicRef) (map[string]domain.Activity, error) {
 	prsByRepo, err := c.fetchPRsBatched(ctx, repos, since)
 	if err != nil {
 		return nil, err
 	}
-	return attributeAllPRs(prsByRepo), nil
+	return attributeAllPRs(prsByRepo, epics), nil
 }
 
 // prCountsByRepo converts PR lists to domain.Activity counts per repo.
@@ -87,25 +166,35 @@ func prCountsByRepo(prsByRepo map[string][]PullRequest) map[string]domain.Activi
 	return out
 }
 
+// EpicRef is the minimal epic info needed for PR attribution: the Jira key
+// and the human-readable summary. The summary is used as a fallback when no
+// epic key appears in a PR title.
+type EpicRef struct {
+	Key     string
+	Summary string
+}
+
 // attributeAllPRs attributes PRs from all repos to epic keys.
-func attributeAllPRs(prsByRepo map[string][]PullRequest) map[string]domain.Activity {
+func attributeAllPRs(prsByRepo map[string][]PullRequest, epics []EpicRef) map[string]domain.Activity {
 	attributed := make(map[string]domain.Activity)
+	nameIndex := buildNameIndex(epics)
 	for _, prs := range prsByRepo {
-		attributePRs(attributed, prs)
+		attributePRs(attributed, prs, nameIndex)
 	}
 	return attributed
 }
 
-// attributePRs maps PRs to epic keys by matching keys in titles.
-func attributePRs(attributed map[string]domain.Activity, prs []PullRequest) {
+// attributePRs maps PRs to epic keys. First by Jira key in the title; PRs with
+// no key fall back to matching distinctive summary tokens.
+func attributePRs(attributed map[string]domain.Activity, prs []PullRequest, nameIndex *nameIndex) {
 	for _, pr := range prs {
-		keys := keyPattern.FindAllString(pr.Title, -1)
-		if len(keys) == 0 {
+		key := matchEpic(pr.Title, nameIndex)
+		if key == "" {
 			continue
 		}
-		a := attributed[keys[0]]
+		a := attributed[key]
 		a.PullRequests++
-		attributed[keys[0]] = a
+		attributed[key] = a
 	}
 }
 
@@ -114,7 +203,6 @@ func AggregateActivity(activities map[string]domain.Activity) domain.Activity {
 	var total domain.Activity
 	for _, a := range activities {
 		total.PullRequests += a.PullRequests
-		total.Commits += a.Commits
 	}
 	return total
 }
@@ -240,7 +328,7 @@ func parseNextLink(linkHeader string) string {
 		if strings.Contains(part, `rel="next"`) {
 			start := strings.Index(part, "<")
 			end := strings.Index(part, ">")
-			if start != -1 && end != -1 {
+			if start != -1 && end > start {
 				return part[start+1 : end]
 			}
 		}

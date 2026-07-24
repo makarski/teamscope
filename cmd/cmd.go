@@ -58,6 +58,11 @@ func (d *deps) buildRunner() (*pipeline.Runner, error) {
 
 	aiClient := buildAIClient(d.cfg.Anthropic, d.cfg.Bedrock)
 
+	var ghFetcher pipeline.GitHubFetcher
+	if gh := github.NewClient(d.cfg.GitHub.Token); gh != nil {
+		ghFetcher = gh
+	}
+
 	return pipeline.NewRunner(pipeline.Deps{
 		Fetcher:     fetcher,
 		Sources:     sources,
@@ -68,7 +73,7 @@ func (d *deps) buildRunner() (*pipeline.Runner, error) {
 		GoalsHash:   d.cfg.GoalsHash(),
 		Drift:       drift.NewChecker(fetcher, drift.NewAIAttributor(aiClient)),
 		Narrator:    narratorOrNil(aiClient),
-		GitHub:      github.NewClient(d.cfg.GitHub.Token),
+		GitHub:      ghFetcher,
 	}), nil
 }
 

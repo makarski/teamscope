@@ -24,7 +24,7 @@ func snapshot() domain.Snapshot {
 			// unmapped chore
 			{Key: "PT-2", Summary: "Upgrade", Criterion: domain.CriterionRef{Key: ""}, Status: domain.StatusOngoing, Progress: 0.2},
 			// advances billing, but overdue
-			{Key: "PT-1", Summary: "Billing", Criterion: domain.CriterionRef{Key: "billing", Advances: domain.AdvAdvances}, Lens: domain.LensBusiness, Status: domain.StatusOverdue, Progress: 0.5},
+			{Key: "PT-1", Summary: "Billing", Criterion: domain.CriterionRef{Key: "billing", Advances: domain.AdvAdvances}, Lens: domain.LensBusiness, Status: domain.StatusOverdue, Progress: 0.5, Activity: domain.Activity{PullRequests: 4}},
 		},
 	}
 }
@@ -90,6 +90,28 @@ func TestProgressRounding(t *testing.T) {
 	if byKey["PT-1"] != 50 || byKey["PT-2"] != 20 {
 		t.Errorf("progress rounding wrong: %+v", byKey)
 	}
+}
+
+func TestNewTeamViewGitHubActivity(t *testing.T) {
+	v := NewTeamView(snapshot())
+	// PT-1 has 4 PRs; PT-2 has none -> team total is 4.
+	if v.GitHubPRs != 4 {
+		t.Errorf("team GitHubPRs = %d, want 4", v.GitHubPRs)
+	}
+	// billing criterion should carry PT-1's 4 PRs.
+	billing := findCoverage(v.Coverage, "billing")
+	if billing.PRs != 4 {
+		t.Errorf("billing criterion PRs = %d, want 4", billing.PRs)
+	}
+}
+
+func findCoverage(cov []CriterionCoverage, key string) CriterionCoverage {
+	for _, c := range cov {
+		if c.Key == key {
+			return c
+		}
+	}
+	return CriterionCoverage{}
 }
 
 type stubSource struct {

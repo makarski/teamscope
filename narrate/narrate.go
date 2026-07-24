@@ -89,26 +89,10 @@ func briefPrompt(snap domain.Snapshot) string {
 		b.WriteString(epicLine(e))
 	}
 
-	// Include GitHub PR activity if available.
-	totalPRs, _ := teamActivity(snap.Epics)
-	if totalPRs > 0 {
-		b.WriteString(fmt.Sprintf("\nGitHub PR activity (last 90 days): %d merged PRs\n", totalPRs))
-	}
-
 	return b.String()
 }
 
-// teamActivity returns the GitHub activity for the team. Since activity is
-// attributed per-epic, we sum across all epics.
-func teamActivity(epics []domain.ClassifiedEpic) (prs, commits int) {
-	for _, e := range epics {
-		prs += e.Activity.PullRequests
-		commits += e.Activity.Commits
-	}
-	return prs, commits
-}
-
-// activityByCriterion sums GitHub activity per criterion key.
+// activityByCriterion sums GitHub PR activity per criterion key.
 func activityByCriterion(snap domain.Snapshot) map[string]domain.Activity {
 	out := make(map[string]domain.Activity)
 	for _, e := range snap.Epics {
@@ -117,7 +101,6 @@ func activityByCriterion(snap domain.Snapshot) map[string]domain.Activity {
 		}
 		a := out[e.Criterion.Key]
 		a.PullRequests += e.Activity.PullRequests
-		a.Commits += e.Activity.Commits
 		out[e.Criterion.Key] = a
 	}
 	return out

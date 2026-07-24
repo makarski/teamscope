@@ -71,7 +71,11 @@ func TestFetchActivity(t *testing.T) {
 }
 
 func testAttributedActivity(t *testing.T, client *Client, since time.Time) {
-	attributed, err := client.FetchAttributedActivity(context.Background(), []string{"owner/repo"}, since)
+	epics := []EpicRef{
+		{Key: "PT-1", Summary: "Fix bug"},
+		{Key: "PT-2", Summary: "Add feature"},
+	}
+	attributed, err := client.FetchAttributedActivity(context.Background(), []string{"owner/repo"}, since, epics)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,20 +99,59 @@ func checkActivity(t *testing.T, m map[string]domain.Activity, key string, prs i
 
 func TestAggregateActivity(t *testing.T) {
 	activities := map[string]domain.Activity{
-		"org/repo1": {PullRequests: 3, Commits: 10},
-		"org/repo2": {PullRequests: 2, Commits: 5},
+		"org/repo1": {PullRequests: 3},
+		"org/repo2": {PullRequests: 2},
 	}
 	total := AggregateActivity(activities)
 	if total.PullRequests != 5 {
 		t.Errorf("total PRs = %d, want 5", total.PullRequests)
-	}
-	if total.Commits != 15 {
-		t.Errorf("total commits = %d, want 15", total.Commits)
 	}
 }
 
 func TestNewClientNilOnEmptyToken(t *testing.T) {
 	if c := NewClient(""); c != nil {
 		t.Error("NewClient(\"\") should return nil")
+	}
+}
+
+func TestAttributeByNameFallback(t *testing.T) {
+	// PR with no Jira key should fall back to matching a distinctive summary
+	// token. "checkout" appears only in PT-3's summary, so it should attribute
+	// to PT-3 even though the PR title has no key.
+	epics := []EpicRef{
+		{Key: "PT-1", Summary: "Fix login bug"},
+		{Key: "PT-2", Summary: "Add search feature"},
+		{Key: "PT-3", Summary: "Improve checkout flow"},
+	}
+	prsByRepo := map[string][]PullRequest{
+		"owner/repo": {
+			{Number: 10, Title: "Refactor checkout validation"},
+			{Number: 11, Title: "PT-1 update auth token"},
+			{Number: 12, Title: "Misc cleanup"}, // no match
+		},
+	}
+	attributed := attributeAllPRs(prsByRepo, epics)
+	checkActivity(t, attributed, "PT-1", 1) // key match
+	checkActivity(t, attributed, "PT-3", 1) // name fallback
+	if _, ok := attributed["PT-2"]; ok {
+		t.Error("PT-2 should not be attributed: no matching PR")
+	}
+}
+
+func TestAttributeByNameRejectsAmbiguousTokens(t *testing.T) {
+	// "feature" appears in both summaries, so it must not be used for
+	// attribution — otherwise a PR titled "feature polish" would be ambiguous.
+	epics := []EpicRef{
+		{Key: "PT-1", Summary: "Add search feature"},
+		{Key: "PT-2", Summary: "Build reporting feature"},
+	}
+	prsByRepo := map[string][]PullRequest{
+		"owner/repo": {
+			{Number: 20, Title: "Feature polish"},
+		},
+	}
+	attributed := attributeAllPRs(prsByRepo, epics)
+	if len(attributed) != 0 {
+		t.Errorf("expected no attribution for ambiguous token, got %v", attributed)
 	}
 }

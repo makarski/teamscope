@@ -14,7 +14,7 @@ It combines three signals:
 
 - **Observability** — epic progress, delivery status, per-criterion coverage, drift, and trend history over time (persisted in SQLite).
 - **AI** — Anthropic maps ambiguous epics to the best-fitting criterion, scores advancement, and writes a PO-style progress brief with an action plan.
-- **GitHub** — merged PR and commit counts per team's repos as a secondary activity signal.
+- **GitHub** — merged PR counts per team's repos as a secondary activity signal.
 
 ```mermaid
 flowchart LR
@@ -25,7 +25,7 @@ flowchart LR
     Rubric --> Classify
     Classify -->|rules first, AI fallback| Align
     Align -->|advances?| Drift
-    GitHub -->|PRs, commits| Drift
+    GitHub -->|PRs| Drift
     Drift --> Store[(SQLite)]
     Store --> Web[Dashboard]
     Store --> Trends[Trends page]
@@ -74,7 +74,7 @@ or AI mapping. Pillar cards with drift are highlighted with colored borders.
 - **Unmapped section** — collapsible list of epics serving no declared goal, with Jira links.
 - **Coverage table** — for each criterion: status, advancing count, and share.
 - **Epic table** — all epics with criterion, advancement verdict, status, progress bar, and expandable child tickets.
-- **GitHub badges** — PR and commit counts per team (last 90 days).
+- **GitHub badges** — PR counts per team (last 90 days).
 - **Trends page** — SVG filled line charts showing epic count, blocker focus, drift count, and unmapped count over time. Includes the latest PO brief per team.
 
 ## Usage
@@ -110,7 +110,7 @@ entry with `jira_projects` and a `rubric` reference, plus `[store] path`.
 Optional:
 - **`[anthropic]`** — AI classification, advancement scoring, drift attribution, and PO narrative. Needs an API token.
 - **`[bedrock]`** — alternative AI backend via Amazon Bedrock. Needs only AWS credentials via the standard credential chain. Takes priority over `[anthropic]` when configured.
-- **`[github]`** — PR and commit activity per team. Add `github_repos` to each team to enable.
+- **`[github]`** — PR activity per team. Add `github_repos` to each team to enable.
 - **`[slack]`** — posts a summary per team when configured.
 
 ## State

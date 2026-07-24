@@ -143,7 +143,7 @@ const dashboardTemplate = `<!DOCTYPE html>
             {{.DoneCount}} done / {{.OpenCount}} open
             {{end}}
             {{if .Tickets}} &middot; {{len .Tickets}} tickets{{end}}
-            {{if or .PRs .Commits}} &middot; {{.PRs}} PRs{{end}}
+            {{if .PRs}} &middot; {{.PRs}} PRs{{end}}
           </div>
           {{if .Tickets}}
           <div class="pillar-tickets">

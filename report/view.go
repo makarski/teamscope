@@ -11,21 +11,20 @@ import (
 
 // TeamView is the display model for a single team's latest snapshot.
 type TeamView struct {
-	Team          string
-	Rubric        string
-	TakenAt       string
-	EpicCount     int
-	Coverage      []CriterionCoverage
-	Lenses        []LensShare
-	Drift         []CriterionCoverage // criteria with no active epic advancing them
-	Unmapped      []EpicView          // epics that mapped to no criterion
-	OffTrack      []EpicView          // overdue epics needing attention
-	Epics         []EpicView
-	BlockerFocus  int // % of active epics working an open criterion
-	States        []PillarStateView
-	Narrative     string
-	GitHubPRs     int
-	GitHubCommits int
+	Team         string
+	Rubric       string
+	TakenAt      string
+	EpicCount    int
+	Coverage     []CriterionCoverage
+	Lenses       []LensShare
+	Drift        []CriterionCoverage // criteria with no active epic advancing them
+	Unmapped     []EpicView          // epics that mapped to no criterion
+	OffTrack     []EpicView          // overdue epics needing attention
+	Epics        []EpicView
+	BlockerFocus int // % of active epics working an open criterion
+	States       []PillarStateView
+	Narrative    string
+	GitHubPRs    int
 }
 
 // PillarStateView is the display model for a criterion's drift state.
@@ -40,7 +39,6 @@ type PillarStateView struct {
 	Advancing int // epics that advance this criterion
 	Total     int // epics mapped to this criterion
 	PRs       int // GitHub PRs attributed to this criterion's epics
-	Commits   int // GitHub commits attributed to this criterion's epics
 }
 
 // TicketView is a Jira ticket with its live status. Used for both pillar
@@ -61,7 +59,6 @@ type CriterionCoverage struct {
 	Total     int // epics mapped to this criterion
 	Share     int // % of all epics mapped here
 	PRs       int // GitHub PRs attributed to this criterion's epics
-	Commits   int // GitHub commits attributed to this criterion's epics
 }
 
 // LensShare is the share of epics viewed through one lens.
@@ -93,21 +90,20 @@ func NewTeamView(snap domain.Snapshot) TeamView {
 	coverage := criterionCoverage(snap)
 
 	return TeamView{
-		Team:          snap.Team,
-		Rubric:        snap.Rubric.Name,
-		TakenAt:       snap.TakenAt.Format(timeDisplayLayout),
-		EpicCount:     len(snap.Epics),
-		Coverage:      coverage,
-		Lenses:        lensShares(snap.Epics),
-		Drift:         driftCriteria(coverage),
-		Unmapped:      filterUnmapped(epics),
-		OffTrack:      filterOffTrack(epics),
-		Epics:         epics,
-		BlockerFocus:  blockerFocus(snap),
-		States:        pillarStates(snap.States, coverage),
-		Narrative:     snap.Narrative,
-		GitHubPRs:     teamPRs(snap.Epics),
-		GitHubCommits: teamCommits(snap.Epics),
+		Team:         snap.Team,
+		Rubric:       snap.Rubric.Name,
+		TakenAt:      snap.TakenAt.Format(timeDisplayLayout),
+		EpicCount:    len(snap.Epics),
+		Coverage:     coverage,
+		Lenses:       lensShares(snap.Epics),
+		Drift:        driftCriteria(coverage),
+		Unmapped:     filterUnmapped(epics),
+		OffTrack:     filterOffTrack(epics),
+		Epics:        epics,
+		BlockerFocus: blockerFocus(snap),
+		States:       pillarStates(snap.States, coverage),
+		Narrative:    snap.Narrative,
+		GitHubPRs:    teamPRs(snap.Epics),
 	}
 }
 
@@ -141,7 +137,6 @@ func pillarStates(states []domain.CriterionState, coverage []CriterionCoverage) 
 			Advancing: cov.Advancing,
 			Total:     cov.Total,
 			PRs:       cov.PRs,
-			Commits:   cov.Commits,
 		})
 	}
 	return views
@@ -166,7 +161,6 @@ func criterionCoverage(snap domain.Snapshot) []CriterionCoverage {
 		}
 		cov.Total++
 		cov.PRs += e.Activity.PullRequests
-		cov.Commits += e.Activity.Commits
 		if e.Criterion.Advances == domain.AdvAdvances {
 			cov.Advancing++
 		}
@@ -294,15 +288,6 @@ func teamPRs(epics []domain.ClassifiedEpic) int {
 	total := 0
 	for _, e := range epics {
 		total += e.Activity.PullRequests
-	}
-	return total
-}
-
-// teamCommits sums GitHub commits across all epics.
-func teamCommits(epics []domain.ClassifiedEpic) int {
-	total := 0
-	for _, e := range epics {
-		total += e.Activity.Commits
 	}
 	return total
 }
