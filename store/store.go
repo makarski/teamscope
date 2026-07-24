@@ -137,6 +137,7 @@ func migrate(db *sql.DB) error {
 	}{
 		{"ticket_links", "ticket_summary", `ALTER TABLE ticket_links ADD COLUMN ticket_summary TEXT NOT NULL DEFAULT ''`},
 		{"snapshots", "narrative", `ALTER TABLE snapshots ADD COLUMN narrative TEXT NOT NULL DEFAULT ''`},
+		{"snapshots", "rubric", `ALTER TABLE snapshots ADD COLUMN rubric TEXT NOT NULL DEFAULT ''`},
 	}
 	for _, m := range migrations {
 		if err := addColumnIfMissing(db, m.table, m.column, m.ddl); err != nil {
