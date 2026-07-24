@@ -24,6 +24,7 @@ type TeamView struct {
 	BlockerFocus int // % of active epics working an open criterion
 	States       []PillarStateView
 	Narrative    string
+	GitHubPRs    int
 }
 
 // PillarStateView is the display model for a criterion's drift state.
@@ -37,6 +38,7 @@ type PillarStateView struct {
 	Tickets   []TicketView
 	Advancing int // epics that advance this criterion
 	Total     int // epics mapped to this criterion
+	PRs       int // GitHub PRs attributed to this criterion's epics
 }
 
 // TicketView is a Jira ticket with its live status. Used for both pillar
@@ -56,6 +58,7 @@ type CriterionCoverage struct {
 	Advancing int // epics that advance this criterion
 	Total     int // epics mapped to this criterion
 	Share     int // % of all epics mapped here
+	PRs       int // GitHub PRs attributed to this criterion's epics
 }
 
 // LensShare is the share of epics viewed through one lens.
@@ -100,11 +103,13 @@ func NewTeamView(snap domain.Snapshot) TeamView {
 		BlockerFocus: blockerFocus(snap),
 		States:       pillarStates(snap.States, coverage),
 		Narrative:    snap.Narrative,
+		GitHubPRs:    teamPRs(snap.Epics),
 	}
 }
 
 // pillarStates converts domain CriterionStates to display views, enriching
-// them with coverage data (advancing/total epics) from the criterion coverage.
+// them with coverage data (advancing/total epics) and GitHub activity from
+// the criterion coverage.
 func pillarStates(states []domain.CriterionState, coverage []CriterionCoverage) []PillarStateView {
 	covByKey := map[string]CriterionCoverage{}
 	for _, c := range coverage {
@@ -131,6 +136,7 @@ func pillarStates(states []domain.CriterionState, coverage []CriterionCoverage) 
 			Tickets:   tickets,
 			Advancing: cov.Advancing,
 			Total:     cov.Total,
+			PRs:       cov.PRs,
 		})
 	}
 	return views
@@ -154,6 +160,7 @@ func criterionCoverage(snap domain.Snapshot) []CriterionCoverage {
 			continue // unmapped or stale key; surfaced separately
 		}
 		cov.Total++
+		cov.PRs += e.Activity.PullRequests
 		if e.Criterion.Advances == domain.AdvAdvances {
 			cov.Advancing++
 		}
@@ -274,4 +281,13 @@ func pct(n, total int) int {
 		return 0
 	}
 	return int(math.Round(float64(n) / float64(total) * 100))
+}
+
+// teamPRs sums GitHub PRs across all epics.
+func teamPRs(epics []domain.ClassifiedEpic) int {
+	total := 0
+	for _, e := range epics {
+		total += e.Activity.PullRequests
+	}
+	return total
 }

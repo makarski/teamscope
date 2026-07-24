@@ -13,6 +13,7 @@ import (
 	"github.com/makarski/teamscope/align"
 	"github.com/makarski/teamscope/config"
 	"github.com/makarski/teamscope/domain"
+	"github.com/makarski/teamscope/github"
 	"github.com/makarski/teamscope/ingest"
 )
 
@@ -50,6 +51,12 @@ type Store interface {
 	Save(ctx context.Context, snap domain.Snapshot) (int64, error)
 }
 
+// GitHubFetcher fetches contribution activity for a team's repos. May be nil
+// to skip the activity signal.
+type GitHubFetcher interface {
+	FetchAttributedActivity(ctx context.Context, repos []string, since time.Time, epics []github.EpicRef) (map[string]domain.Activity, error)
+}
+
 // TicketFetcher fetches live Jira ticket status by key, for drift checking.
 // May be nil to skip drift.
 type TicketFetcher interface {
@@ -74,8 +81,8 @@ type Runner struct {
 	now  func() time.Time
 }
 
-// Deps bundles the pipeline collaborators. aligner, drift, and narrator may
-// be nil to skip those stages.
+// Deps bundles the pipeline collaborators. aligner, drift, github, and
+// narrator may be nil to skip those stages.
 type Deps struct {
 	Fetcher     Fetcher
 	Sources     map[string]RubricSource // keyed by team name
@@ -87,6 +94,7 @@ type Deps struct {
 	Drift       DriftChecker
 	DriftTexts  func(team string, epics []ingest.RawEpic) []string
 	Narrator    Narrator
+	GitHub      GitHubFetcher
 }
 
 // NewRunner wires the pipeline collaborators from Deps.
@@ -140,6 +148,8 @@ func (r *Runner) Run(ctx context.Context, team config.Team) (int64, error) {
 		classified = append(classified, r.enrichWithRef(ctx, &epics[i], ref, rc))
 	}
 	slog.Info("enriched epics", "team", team.Name, "count", len(classified))
+
+	classified = r.enrichActivity(ctx, team, classified)
 
 	states := r.computeDrift(ctx, rubric, team, epics)
 	slog.Info("computed drift", "team", team.Name, "states", len(states))
@@ -416,4 +426,49 @@ func (r *Runner) generateNarrative(ctx context.Context, snap domain.Snapshot) st
 		return ""
 	}
 	return brief
+}
+
+// fetchGitHubActivity fetches merged PRs for the team's repos in the last
+// 90 days and attributes them to epics by Jira key (with epic-summary token
+// fallback). Returns a map of epic key → Activity.
+func (r *Runner) fetchGitHubActivity(ctx context.Context, team config.Team, epics []domain.ClassifiedEpic) map[string]domain.Activity {
+	since := r.now().AddDate(0, 0, -90)
+	refs := make([]github.EpicRef, 0, len(epics))
+	for _, e := range epics {
+		refs = append(refs, github.EpicRef{Key: e.Key, Summary: e.Summary})
+	}
+	attributed, err := r.deps.GitHub.FetchAttributedActivity(ctx, team.GitHubRepos, since, refs)
+	if err != nil {
+		slog.Warn("github activity fetch failed", "team", team.Name, "err", err)
+		return nil
+	}
+	return attributed
+}
+
+// enrichActivity fetches GitHub activity for the team's repos and attributes
+// it to individual epics by key matching (with summary-token fallback).
+// Epics without matching GitHub activity get zero activity. No-op when
+// GitHub is not configured, the team has no repos, or there are no epics.
+func (r *Runner) enrichActivity(ctx context.Context, team config.Team, epics []domain.ClassifiedEpic) []domain.ClassifiedEpic {
+	if !shouldEnrichGitHub(r.deps.GitHub, team, epics) {
+		return epics
+	}
+	attributed := r.fetchGitHubActivity(ctx, team, epics)
+	totalPRs := 0
+	for i := range epics {
+		if a, ok := attributed[epics[i].Key]; ok {
+			epics[i].Activity = a
+			totalPRs += a.PullRequests
+		}
+	}
+	slog.Info("fetched github activity", "team", team.Name, "repos", len(team.GitHubRepos),
+		"prs", totalPRs, "attributed", len(attributed))
+	return epics
+}
+
+// shouldEnrichGitHub reports whether the GitHub activity stage should run:
+// GitHub must be configured, the team must have repos, and there must be
+// at least one epic to attribute activity to.
+func shouldEnrichGitHub(gh GitHubFetcher, team config.Team, epics []domain.ClassifiedEpic) bool {
+	return gh != nil && len(team.GitHubRepos) > 0 && len(epics) > 0
 }

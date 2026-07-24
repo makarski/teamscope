@@ -63,8 +63,7 @@ CREATE TABLE IF NOT EXISTS epics (
 	lens          TEXT    NOT NULL,
 	progress      REAL    NOT NULL,
 	status        TEXT    NOT NULL,
-	gh_prs        INTEGER NOT NULL,
-	gh_commits    INTEGER NOT NULL
+	gh_prs        INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_epics_snapshot
@@ -127,10 +126,9 @@ func Open(path string) (*Store, error) {
 }
 
 // migrate applies incremental schema changes for databases created before the
-// current schema. Each migration is idempotent: it checks whether the column
-// exists before altering.
+// current schema. Each migration is idempotent.
 func migrate(db *sql.DB) error {
-	migrations := []struct {
+	addMigrations := []struct {
 		table  string
 		column string
 		ddl    string
@@ -138,10 +136,22 @@ func migrate(db *sql.DB) error {
 		{"ticket_links", "ticket_summary", `ALTER TABLE ticket_links ADD COLUMN ticket_summary TEXT NOT NULL DEFAULT ''`},
 		{"snapshots", "narrative", `ALTER TABLE snapshots ADD COLUMN narrative TEXT NOT NULL DEFAULT ''`},
 	}
-	for _, m := range migrations {
+	for _, m := range addMigrations {
 		if err := addColumnIfMissing(db, m.table, m.column, m.ddl); err != nil {
 			return err
 		}
+	}
+	return dropColumnIfExists(db, "epics", "gh_commits")
+}
+
+// dropColumnIfExists removes a column from a table if it exists. Used to
+// retire legacy columns that are no longer referenced by inserts.
+func dropColumnIfExists(db *sql.DB, table, column string) error {
+	if !columnExists(db, table, column) {
+		return nil
+	}
+	if _, err := db.Exec(fmt.Sprintf(`ALTER TABLE %s DROP COLUMN %s`, table, column)); err != nil {
+		return fmt.Errorf("migrate: drop %s.%s: %w", table, column, err)
 	}
 	return nil
 }
@@ -271,8 +281,8 @@ func insertMix(ctx context.Context, tx *sql.Tx, snapID int64, mix map[string]flo
 func insertEpics(ctx context.Context, tx *sql.Tx, snapID int64, epics []domain.ClassifiedEpic) error {
 	stmt, err := tx.PrepareContext(ctx,
 		`INSERT INTO epics
-		 (snapshot_id, key, summary, criterion_key, class_source, advances, align_note, lens, progress, status, gh_prs, gh_commits)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		 (snapshot_id, key, summary, criterion_key, class_source, advances, align_note, lens, progress, status, gh_prs)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return fmt.Errorf("store: prepare epic insert: %w", err)
 	}
@@ -289,7 +299,7 @@ func insertEpics(ctx context.Context, tx *sql.Tx, snapID int64, epics []domain.C
 		res, err := stmt.ExecContext(ctx,
 			snapID, e.Key, e.Summary, e.Criterion.Key, string(e.Criterion.Source),
 			string(e.Criterion.Advances), e.Criterion.Note, string(e.Lens),
-			e.Progress, string(e.Status), e.Activity.PullRequests, e.Activity.Commits,
+			e.Progress, string(e.Status), e.Activity.PullRequests,
 		)
 		if err != nil {
 			return fmt.Errorf("store: insert epic %s: %w", e.Key, err)
@@ -563,7 +573,7 @@ func (s *Store) loadCriteria(ctx context.Context, snapID int64) ([]domain.Criter
 
 func (s *Store) loadEpics(ctx context.Context, snapID int64) ([]domain.ClassifiedEpic, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, key, summary, criterion_key, class_source, advances, align_note, lens, progress, status, gh_prs, gh_commits
+		`SELECT id, key, summary, criterion_key, class_source, advances, align_note, lens, progress, status, gh_prs
 		 FROM epics WHERE snapshot_id = ? ORDER BY id`, snapID)
 	if err != nil {
 		return nil, fmt.Errorf("store: query epics: %w", err)
@@ -608,7 +618,7 @@ func scanEpicWithID(rows *sql.Rows, epicID *int64) (domain.ClassifiedEpic, error
 	)
 	if err := rows.Scan(
 		epicID, &e.Key, &e.Summary, &critKey, &src, &advances, &e.Criterion.Note,
-		&lens, &e.Progress, &st, &e.Activity.PullRequests, &e.Activity.Commits,
+		&lens, &e.Progress, &st, &e.Activity.PullRequests,
 	); err != nil {
 		return domain.ClassifiedEpic{}, fmt.Errorf("store: scan epic: %w", err)
 	}

@@ -111,6 +111,7 @@ const dashboardTemplate = `<!DOCTYPE html>
         <span class="badge badge-green">focus {{.BlockerFocus}}%</span>
         {{if .Drift}}<span class="badge badge-red">{{len .Drift}} drift</span>{{else}}<span class="badge badge-green">on track</span>{{end}}
         {{if .Unmapped}}<span class="badge badge-yellow">{{len .Unmapped}} unmapped</span>{{end}}
+        {{if .GitHubPRs}}<span class="badge badge-purple">{{.GitHubPRs}} PRs</span>{{end}}
         <span style="color:var(--text-dim);font-size:1.2rem" x-show="!open">&#9660;</span>
         <span style="color:var(--text-dim);font-size:1.2rem" x-show="open" x-cloak>&#9650;</span>
       </div>
@@ -142,6 +143,7 @@ const dashboardTemplate = `<!DOCTYPE html>
             {{.DoneCount}} done / {{.OpenCount}} open
             {{end}}
             {{if .Tickets}} &middot; {{len .Tickets}} tickets{{end}}
+            {{if .PRs}} &middot; {{.PRs}} PRs{{end}}
           </div>
           {{if .Tickets}}
           <div class="pillar-tickets">

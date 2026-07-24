@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -37,7 +38,7 @@ func sampleSnapshot() domain.Snapshot {
 					Advances: domain.AdvAdvances, Note: "matches Q3 billing goal",
 				},
 				Lens: domain.LensBusiness, Progress: 0.5, Status: domain.StatusOngoing,
-				Activity: domain.Activity{PullRequests: 3, Commits: 12},
+				Activity: domain.Activity{PullRequests: 3},
 			},
 			{
 				Key: "PT-2", Summary: "Upgrade deps",
@@ -97,7 +98,7 @@ func assertFirstEpic(t *testing.T, got domain.Snapshot) {
 	if e.Lens != domain.LensBusiness {
 		t.Errorf("lens mismatch: %q", e.Lens)
 	}
-	if e.Activity.PullRequests != 3 || e.Activity.Commits != 12 {
+	if e.Activity.PullRequests != 3 {
 		t.Errorf("activity mismatch: %+v", e.Activity)
 	}
 }
@@ -141,5 +142,53 @@ func TestTrendOrdering(t *testing.T) {
 	// newest first: day 12, 11, 10
 	if trend[0].TakenAt.Day() != 12 || trend[2].TakenAt.Day() != 10 {
 		t.Errorf("ordering wrong: %d, %d", trend[0].TakenAt.Day(), trend[2].TakenAt.Day())
+	}
+}
+
+// TestMigrateDropsGhCommits verifies that a legacy DB with the gh_commits
+// column is migrated so inserts (which no longer bind the column) succeed.
+func TestMigrateDropsGhCommits(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	// Build a legacy epics table that includes gh_commits NOT NULL.
+	_, err = db.Exec(`CREATE TABLE epics (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		snapshot_id INTEGER NOT NULL,
+		key TEXT NOT NULL,
+		summary TEXT NOT NULL,
+		criterion_key TEXT NOT NULL,
+		class_source TEXT NOT NULL,
+		advances TEXT NOT NULL,
+		align_note TEXT NOT NULL,
+		lens TEXT NOT NULL,
+		progress REAL NOT NULL,
+		status TEXT NOT NULL,
+		gh_prs INTEGER NOT NULL,
+		gh_commits INTEGER NOT NULL
+	)`)
+	if err != nil {
+		t.Fatalf("create legacy table: %v", err)
+	}
+
+	// Open via the app's Open() which runs migrate().
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("open with migrate: %v", err)
+	}
+	defer s.Close()
+
+	if columnExists(db, "epics", "gh_commits") {
+		t.Error("gh_commits should have been dropped by migration")
+	}
+
+	// Inserting an epic without gh_commits must succeed.
+	ctx := context.Background()
+	if _, err := s.Save(ctx, sampleSnapshot()); err != nil {
+		t.Fatalf("save after migrate: %v", err)
 	}
 }

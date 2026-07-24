@@ -11,6 +11,7 @@ import (
 	"github.com/makarski/teamscope/config"
 	"github.com/makarski/teamscope/domain"
 	"github.com/makarski/teamscope/drift"
+	"github.com/makarski/teamscope/github"
 	"github.com/makarski/teamscope/goals"
 	"github.com/makarski/teamscope/ingest"
 	"github.com/makarski/teamscope/narrate"
@@ -57,6 +58,11 @@ func (d *deps) buildRunner() (*pipeline.Runner, error) {
 
 	aiClient := buildAIClient(d.cfg.Anthropic, d.cfg.Bedrock)
 
+	var ghFetcher pipeline.GitHubFetcher
+	if gh := github.NewClient(d.cfg.GitHub.Token); gh != nil {
+		ghFetcher = gh
+	}
+
 	return pipeline.NewRunner(pipeline.Deps{
 		Fetcher:     fetcher,
 		Sources:     sources,
@@ -67,6 +73,7 @@ func (d *deps) buildRunner() (*pipeline.Runner, error) {
 		GoalsHash:   d.cfg.GoalsHash(),
 		Drift:       drift.NewChecker(fetcher, drift.NewAIAttributor(aiClient)),
 		Narrator:    narratorOrNil(aiClient),
+		GitHub:      ghFetcher,
 	}), nil
 }
 

@@ -111,9 +111,10 @@ const (
 )
 
 // Activity is the secondary GitHub contribution signal for a team/epic.
+// Only merged PRs are tracked (GitHub search API rate limits make commit
+// attribution impractical).
 type Activity struct {
 	PullRequests int `json:"pull_requests"`
-	Commits      int `json:"commits"`
 }
 
 // EpicTicket is a child issue of an epic, surfaced individually so the

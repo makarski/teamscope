@@ -79,6 +79,8 @@ func briefPrompt(snap domain.Snapshot) string {
 		}
 	}
 
+	b.WriteString(activitySection(snap))
+
 	b.WriteString("\nUnmapped epics (work serving no declared goal):\n")
 	b.WriteString(unmappedEpicLines(snap.Epics))
 
@@ -87,6 +89,41 @@ func briefPrompt(snap domain.Snapshot) string {
 		b.WriteString(epicLine(e))
 	}
 
+	return b.String()
+}
+
+// activityByCriterion sums GitHub PR activity per criterion key.
+func activityByCriterion(snap domain.Snapshot) map[string]domain.Activity {
+	out := make(map[string]domain.Activity)
+	for _, e := range snap.Epics {
+		if e.Criterion.Key == "" {
+			continue
+		}
+		a := out[e.Criterion.Key]
+		a.PullRequests += e.Activity.PullRequests
+		out[e.Criterion.Key] = a
+	}
+	return out
+}
+
+// activitySection formats the per-criterion GitHub PR activity for the prompt.
+func activitySection(snap domain.Snapshot) string {
+	critActivity := activityByCriterion(snap)
+	if len(critActivity) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nGitHub PR activity per criterion:\n")
+	for _, c := range snap.Rubric.Criteria {
+		a, ok := critActivity[c.Key]
+		if !ok {
+			continue
+		}
+		if a.PullRequests == 0 {
+			continue
+		}
+		b.WriteString(fmt.Sprintf("  - %s: %d PRs\n", c.Title, a.PullRequests))
+	}
 	return b.String()
 }
 
