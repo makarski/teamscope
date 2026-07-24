@@ -158,6 +158,11 @@ tr:last-child td { border-bottom: none; }
 .unmapped-item a { color: var(--accent); text-decoration: none; font-weight: 600; }
 .unmapped-item a:hover { text-decoration: underline; }
 
+/* Epics table */
+.epics-section { margin-bottom: 1rem; }
+.epics-header { display: flex; align-items: center; gap: .5rem; cursor: pointer; padding: .5rem 0; }
+.epics-hint { font-size: .76rem; color: var(--text-dim); }
+
 /* SVG charts */
 .chart-container { margin-bottom: 1rem; }
 .chart-label { font-size: .78rem; color: var(--text-dim); font-weight: 600; margin-bottom: .25rem; }
