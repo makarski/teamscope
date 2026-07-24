@@ -190,6 +190,14 @@ const dashboardTemplate = `<!DOCTYPE html>
       </table>
       {{end}}
 
+      {{if .Epics}}
+      <div class="epics-section" x-data="{ show: false }">
+        <div class="epics-header" role="button" tabindex="0" :aria-expanded="show" @click="show = !show" @keydown.enter="show = !show" @keydown.space.prevent="show = !show">
+          <span class="badge badge-blue">{{len .Epics}} epics</span>
+          <span class="epics-hint" x-show="!show">click to show</span>
+          <span class="epics-hint" x-show="show" x-cloak>click to hide</span>
+        </div>
+        <template x-if="show">
       <table>
         <thead><tr><th>Epic</th><th>Criterion</th><th>Advances</th><th>Status</th><th>Progress</th></tr></thead>
         <tbody>
@@ -225,6 +233,9 @@ const dashboardTemplate = `<!DOCTYPE html>
           {{end}}
         </tbody>
       </table>
+        </template>
+      </div>
+      {{end}}
     </div>
   </section>
 {{end}}
