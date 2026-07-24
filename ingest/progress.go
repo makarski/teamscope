@@ -11,19 +11,27 @@ import (
 
 // ProgressOf computes the delivery status and completion ratio of an epic or
 // standalone issue, applying status-bucketing rules against the configured
-// statuses. For issues with no child tickets, progress is derived from the
-// issue's own status: done = 1.0, todo = 0.0, in-progress = 0.5. An overdue
-// standalone issue (past its due date) is reported as StatusOverdue with 0.5
-// progress.
+// statuses. The epic's own status is authoritative: if it's already
+// done-bucketed in Jira, it's reported as StatusDone with 1.0 progress
+// regardless of any child ticket sitting in an unrecognized terminal status
+// (e.g. a "Won't Do" subtask under an otherwise closed epic). For issues with
+// no child tickets, progress is derived from the issue's own status: done =
+// 1.0, todo = 0.0, in-progress = 0.5. An overdue standalone issue (past its
+// due date) is reported as StatusOverdue with 0.5 progress.
 func ProgressOf(re *RawEpic, sn config.StatusNames, now time.Time) (domain.ProgressStatus, float64) {
 	total := len(re.Issues)
 	if total == 0 {
 		return standaloneProgress(re, sn, now)
 	}
 
+	epicStatus := re.Epic.Fields.Status.Name
+	if contains(sn.Done, epicStatus) {
+		return domain.StatusDone, 1.0
+	}
+
 	doneCnt := countIssues(re.Issues, sn.Done)
 	ratio := float64(doneCnt) / float64(total)
-	status := deriveStatus(re, sn, doneCnt, total, now)
+	status := deriveStatus(re, sn, epicStatus, now)
 	return status, ratio
 }
 
@@ -42,17 +50,13 @@ func standaloneProgress(re *RawEpic, sn config.StatusNames, now time.Time) (doma
 	return domain.StatusOngoing, 0.5
 }
 
-func deriveStatus(re *RawEpic, sn config.StatusNames, doneCnt, total int, now time.Time) domain.ProgressStatus {
-	epicStatus := re.Epic.Fields.Status.Name
-	allDone := total > 0 && doneCnt == total
-
-	if contains(sn.Done, epicStatus) && allDone {
-		return domain.StatusDone
-	}
+// deriveStatus decides the status for an epic whose own status isn't
+// done-bucketed (that case is handled upstream in ProgressOf).
+func deriveStatus(re *RawEpic, sn config.StatusNames, epicStatus string, now time.Time) domain.ProgressStatus {
 	if contains(sn.ToDo, epicStatus) {
 		return domain.StatusToDo
 	}
-	if isOverdue(re, now) && !contains(sn.ToDo, epicStatus) {
+	if isOverdue(re, now) {
 		return domain.StatusOverdue
 	}
 	return domain.StatusOngoing

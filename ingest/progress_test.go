@@ -81,6 +81,12 @@ func TestProgressOf(t *testing.T) {
 			wantStatus: domain.StatusToDo,
 			wantRatio:  0.0,
 		},
+		{
+			name:       "epic done despite child in unrecognized terminal status",
+			epic:       epicWith("Done", past, issue("Done"), issue("Won't Do")),
+			wantStatus: domain.StatusDone,
+			wantRatio:  1.0,
+		},
 	}
 
 	for _, tt := range tests {
